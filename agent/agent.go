@@ -74,6 +74,7 @@ func NewAgent(
 	agent.RegisterTool(tools.ReadFile(c.Workspace))
 	agent.RegisterTool(tools.WriteFile(c.Workspace))
 	agent.RegisterTool(tools.ListDir(c.Workspace))
+	agent.RegisterTool(tools.Shell())
 
 	return agent
 }

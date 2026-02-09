@@ -16,6 +16,7 @@ import (
 
 var systemPromptList = []string{
 	"prompts/AGENTS.md",
+	"prompts/TOOLS.md",
 }
 
 // context management for the agent

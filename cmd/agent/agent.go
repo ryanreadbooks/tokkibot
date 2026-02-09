@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
@@ -25,6 +26,8 @@ import (
 var (
 	agentChatId         string
 	resumeSessionChatId string
+
+	oneTimeQuestion string
 )
 
 var AgentCmd = &cobra.Command{
@@ -34,12 +37,18 @@ var AgentCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
+		if oneTimeQuestion != "" {
+			return runAgentOneTime(ctx, oneTimeQuestion)
+		}
+
 		return runAgent(ctx, args)
 	},
 }
 
 func init() {
 	AgentCmd.Flags().StringVar(&resumeSessionChatId, "resume", "", "To resume a existing session, provide the session id.")
+	AgentCmd.Flags().StringVar(&oneTimeQuestion, "message", "", "To ask a one-time question, provide the message.")
 }
 
 func prepareAgent(ctx context.Context) (
@@ -103,6 +112,41 @@ func prepareAgent(ctx context.Context) (
 	}
 
 	return ag, bus, history, nil
+}
+
+func runAgentOneTime(ctx context.Context, message string) error {
+	ag, bus, _, err := prepareAgent(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to prepare agent: %w", err)
+	}
+
+	ag.Run(ctx) // run in background
+
+	answerChan := make(chan string)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-bus.GetOutgoingChannel(channelmodel.ChannelCLI).Wait(ctx):
+			answerChan <- msg.Content
+		}
+	}()
+
+	err = bus.GetIncomingChannel(channelmodel.ChannelCLI).Send(ctx, channelmodel.IncomingMessage{
+		Channel: channelmodel.ChannelCLI,
+		ChatId:  "one-time",
+		Created: time.Now().Unix(),
+		Content: message,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message to agent: %w", err)
+	}
+
+	answer := <-answerChan
+	fmt.Println("Agent: ", answer)
+
+	return nil
 }
 
 func runAgent(ctx context.Context, args []string) error {

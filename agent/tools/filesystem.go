@@ -35,7 +35,7 @@ func ReadFile(allowDir string) tool.Invoker {
 
 	return tool.NewInvoker(tool.Info{
 		Name:        "read_file",
-		Description: "Read the contents of a file at the given path",
+		Description: "Read the contents of a file at the given path.",
 	}, func(ctx context.Context, input *ReadFileInput) (content string, err error) {
 		// now we can read the file
 		cleanPath, err := resolvePath(input.Path, allowDir)
