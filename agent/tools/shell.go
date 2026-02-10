@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/pkg/os"
@@ -13,6 +14,7 @@ import (
 
 const (
 	maxAllowedShellOutputLen = 15000
+	shellExecTimeout         = 60 * time.Second
 )
 
 type shellResultTag string
@@ -22,6 +24,7 @@ const (
 	shellRunErrTag  shellResultTag = "<shell_run_error>"
 	shellStdoutTag  shellResultTag = "<shell_stdout>"
 	shellStderrTag  shellResultTag = "<shell_stderr>"
+	shellTimeoutTag shellResultTag = "<shell_timeout>"
 )
 
 var errDangerousCommand = errors.New("dangerous command blocked")
@@ -98,7 +101,7 @@ func parseCommand(input string) (name string, args []string) {
 	if len(tokens) == 0 {
 		return "", nil
 	}
-	
+
 	return tokens[0], tokens[1:]
 }
 
@@ -107,7 +110,7 @@ func Shell() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name: "shell",
 		Description: fmt.Sprintf(
-			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided",
+			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided.",
 			os.GetSystemDistro(),
 		),
 	}, func(ctx context.Context, input *ShellInput) (string, error) {
@@ -120,6 +123,10 @@ func Shell() tool.Invoker {
 		if name == "" {
 			return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
 		}
+
+		ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
+		defer cancel()
+
 		cmd := exec.CommandContext(ctx, name, args...)
 		if input.WorkingDir != "" {
 			cleanWd, _ := resolvePath(input.WorkingDir, "")
@@ -133,6 +140,10 @@ func Shell() tool.Invoker {
 
 		err = cmd.Run()
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return "", wrapShellError(err, shellTimeoutTag)
+			}
+
 			return "", wrapShellError(err, shellRunErrTag)
 		}
 

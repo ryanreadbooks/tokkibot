@@ -50,6 +50,25 @@ List the contents of a directory.
 - 📁 prefix indicates a directory
 - 📄 prefix indicates a file
 
+## edit_file
+
+Edit the content of a file at given path by replacing the specific string in the file.
+
+**Parameters:**
+- `file_name` (required): The file to be edited.
+- `new_string` (required): The new string to replace the old string with.
+- `old_string` (required): The old string to replace
+- `replace_all` (optional): Replace all old_string with new_string.
+
+**Example:**
+```json
+{
+  "file_name": "/path/to/file",
+  "new_string": "Hello world",
+  "old_string": "Good morning"
+}
+```
+
 ## shell
 
 Execute a shell command under the optional given working directory.
@@ -70,6 +89,8 @@ Execute a shell command under the optional given working directory.
 - Dangerous commands are blocked for safety (e.g., `rm -rf`, `format`, `shutdown`)
 - Output is wrapped in `<shell_stdout>` and `<shell_stderr>` tags. Other possible tags are <shell_blocked>, <shell_run_error>, etc.
 - Output longer than 15000 characters will be truncated
+- Max shell execution time is 60 seconds.
+- You are encouraged to get current working directory before executing any shell commands even if current working directory will not be used.
 
 ## Tool Usage Guidelines
 

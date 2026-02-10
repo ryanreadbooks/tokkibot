@@ -82,10 +82,10 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	return nil
 }
 
-func (c *ContextManager) NextMessage(inMsg *channelmodel.IncomingMessage) []llmmodel.MessageParam {
+func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId string) {
 	// Load history session messages into message list for the first time
 	c.historyInjectOnce.Do(func() {
-		history, err := c.sessionMgr.GetSessionHistory(inMsg.Channel, inMsg.ChatId)
+		history, err := c.sessionMgr.GetSessionHistory(channel, chatId)
 		if err == nil {
 			// concat the last 50 messages
 			l := min(len(history), 50)
@@ -112,11 +112,12 @@ func (c *ContextManager) NextMessage(inMsg *channelmodel.IncomingMessage) []llmm
 			}
 		}
 	})
+}
 
+func (c *ContextManager) AppendUserMessage(inMsg *channelmodel.IncomingMessage) []llmmodel.MessageParam {
 	// we also should store the incoming message for future conversation
 	userMsg := llmmodel.NewUserMessageParam(inMsg.Content)
 	c.messageList = append(c.messageList, userMsg)
-
 	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addUserMessage(inMsg.Content)
 
 	return c.messageList
@@ -128,11 +129,7 @@ func (c *ContextManager) AppendToolResult(
 	toolCall *llmmodel.CompletionToolCall,
 	result string, // the result of the toolCall with id
 ) {
-	c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(
-		toolCall.Id,
-		result,
-	))
-
+	c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(toolCall.Id, result))
 	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addToolMessage(toolCall.Id, result)
 }
 
@@ -141,11 +138,10 @@ func (c *ContextManager) AppendAssistantMessage(
 	inMsg *channelmodel.IncomingMessage,
 	msg *llmmodel.CompletionMessage,
 ) {
-	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(
-		msg.Content,
-		msg.GetToolCallParams(),
-	))
+	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(msg.Content, msg.GetToolCallParams()))
+	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addAssistantMessage(msg.Content, msg.ToolCalls)
+}
 
-	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).
-		addAssistantMessage(msg.Content, msg.ToolCalls)
+func (c *ContextManager) GetMessageList() []llmmodel.MessageParam {
+	return c.messageList
 }

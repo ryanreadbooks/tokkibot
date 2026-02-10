@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,5 +126,49 @@ func ListDir(allowDir string) tool.Invoker {
 		}
 
 		return ss.String(), nil
+	})
+}
+
+type EditFileInput struct {
+	FileName   string `json:"file_name"             jsonschema:"description=The name of the file to edit"`
+	NewString  string `json:"new_string"            jsonschema:"description=The new string to replace the old string with"`
+	OldString  string `json:"old_string"            jsonschema:"description=The old string to replace"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"description=Whether to replace all occurrences of the old string or just the first one"`
+}
+
+func EditFile(allowDir string) tool.Invoker {
+	if allowDir != "" {
+		allowDir = filepath.Clean(allowDir)
+	}
+
+	return tool.NewInvoker(tool.Info{
+		Name:        "edit_file",
+		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
+	}, func(ctx context.Context, input *EditFileInput) (result string, err error) {
+		cleanPath := filepath.Join(allowDir, input.FileName)
+		f, err := os.OpenFile(cleanPath, os.O_RDWR, 0664)
+		if err != nil {
+			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)
+		}
+		defer f.Close()
+
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return "", fmt.Errorf("failed to read file %s: %w", cleanPath, err)
+		}
+
+		contentStr := string(content)
+		if input.ReplaceAll {
+			contentStr = strings.ReplaceAll(contentStr, input.OldString, input.NewString)
+		} else {
+			contentStr = strings.Replace(contentStr, input.OldString, input.NewString, 1)
+		}
+
+		_, err = f.WriteString(contentStr)
+		if err != nil {
+			return "", fmt.Errorf("failed to write file %s: %w", cleanPath, err)
+		}
+
+		return fmt.Sprintf("File %s edited successfully", cleanPath), nil
 	})
 }

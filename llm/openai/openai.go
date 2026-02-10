@@ -36,7 +36,6 @@ func New(config Config) (*OpenAI, error) {
 	cli := openai.NewClient(
 		option.WithAPIKey(config.ApiKey),
 		option.WithBaseURL(config.BaseURL),
-		option.WithMaxRetries(2),
 	)
 
 	return &OpenAI{

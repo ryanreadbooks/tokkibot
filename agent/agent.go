@@ -70,13 +70,18 @@ func NewAgent(
 		bus: bus,
 	}
 
-	// register tools
-	agent.RegisterTool(tools.ReadFile(c.Workspace))
-	agent.RegisterTool(tools.WriteFile(c.Workspace))
-	agent.RegisterTool(tools.ListDir(c.Workspace))
-	agent.RegisterTool(tools.Shell())
+	agent.registerTools()
 
 	return agent
+}
+
+// register tools
+func (a *Agent) registerTools() {
+	a.RegisterTool(tools.ReadFile(a.c.Workspace))
+	a.RegisterTool(tools.WriteFile(a.c.Workspace))
+	a.RegisterTool(tools.ListDir(a.c.Workspace))
+	a.RegisterTool(tools.EditFile(a.c.Workspace))
+	a.RegisterTool(tools.Shell())
 }
 
 func (a *Agent) RegisterTool(tool tool.Invoker) {
@@ -137,18 +142,19 @@ func (a *Agent) loop(ctx context.Context, channel channel.IncomingChannel) error
 	}
 }
 
-func (c *Agent) handleIncomingMessage(ctx context.Context, inMsg *channelmodel.IncomingMessage) string {
+func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *channelmodel.IncomingMessage) string {
 	curIter := 0
 	finalResult := ""
 
+	a.contextMgr.AppendUserMessage(inMsg)
 	for curIter <= maxIterAllowed {
 		curIter++
 
 		// build llm message request
-		llmReq := c.buildLLMMessageRequest(inMsg)
+		llmReq := a.buildLLMMessageRequest(inMsg)
 
 		// call llm
-		llmResp, err := c.llm.ChatCompletion(ctx, llmReq)
+		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
 		if err != nil {
 			slog.Warn("[agent] failed to call llm", "error", err, "channel", inMsg.Channel)
 			continue
@@ -156,7 +162,7 @@ func (c *Agent) handleIncomingMessage(ctx context.Context, inMsg *channelmodel.I
 
 		choice := llmResp.FirstChoice()
 		// append assitant messages
-		c.contextMgr.AppendAssistantMessage(inMsg, &choice.Message)
+		a.contextMgr.AppendAssistantMessage(inMsg, &choice.Message)
 
 		if choice.IsStopped() {
 			// finished
@@ -168,7 +174,7 @@ func (c *Agent) handleIncomingMessage(ctx context.Context, inMsg *channelmodel.I
 			// TODO maybe in the future we need to handle tool calls concurrently
 			tcs := choice.Message.ToolCalls
 			for _, tc := range tcs {
-				c.handleToolCall(ctx, inMsg, &tc)
+				a.handleToolCall(ctx, inMsg, &tc)
 			}
 		}
 	}
@@ -176,10 +182,10 @@ func (c *Agent) handleIncomingMessage(ctx context.Context, inMsg *channelmodel.I
 	return finalResult
 }
 
-func (c *Agent) sendOutgoingMessage(ctx context.Context,
+func (a *Agent) sendOutgoingMessage(ctx context.Context,
 	chanType channelmodel.Type, chatId string, content string,
 ) {
-	if outCh := c.bus.GetOutgoingChannel(chanType); outCh != nil {
+	if outCh := a.bus.GetOutgoingChannel(chanType); outCh != nil {
 		outCh.Send(ctx, channelmodel.OutgoingMessage{
 			Channel: chanType,
 			ChatId:  chatId,
@@ -189,15 +195,15 @@ func (c *Agent) sendOutgoingMessage(ctx context.Context,
 	}
 }
 
-func (c *Agent) handleToolCall(
+func (a *Agent) handleToolCall(
 	ctx context.Context,
 	inMsg *channelmodel.IncomingMessage,
 	tc *llmmodel.CompletionToolCall,
 ) {
-	c.toolsMu.RLock()
-	tool, ok := c.tools[tc.Function.Name]
+	a.toolsMu.RLock()
+	tool, ok := a.tools[tc.Function.Name]
 	if !ok {
-		c.toolsMu.RUnlock()
+		a.toolsMu.RUnlock()
 		return
 	}
 
@@ -208,23 +214,24 @@ func (c *Agent) handleToolCall(
 	}
 
 	// feedback tool calling result to llm
-	c.contextMgr.AppendToolResult(inMsg, tc, toolResult)
-	c.toolsMu.RUnlock()
+	a.contextMgr.AppendToolResult(inMsg, tc, toolResult)
+	a.toolsMu.RUnlock()
 }
 
-func (c *Agent) buildLLMMessageRequest(inMsg *channelmodel.IncomingMessage) *llm.Request {
+func (a *Agent) buildLLMMessageRequest(inMsg *channelmodel.IncomingMessage) *llm.Request {
+	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId)
 	r := &llm.Request{
-		Model:    c.c.Model,
-		Messages: c.contextMgr.NextMessage(inMsg),
-		Tools:    c.buildLLMToolParams(),
+		Model:    a.c.Model,
+		Messages: a.contextMgr.GetMessageList(),
+		Tools:    a.buildLLMToolParams(),
 	}
 
 	return r
 }
 
-func (c *Agent) buildLLMToolParams() []llmmodel.ToolParam {
-	params := make([]llmmodel.ToolParam, 0, len(c.tools))
-	for _, tool := range c.tools {
+func (a *Agent) buildLLMToolParams() []llmmodel.ToolParam {
+	params := make([]llmmodel.ToolParam, 0, len(a.tools))
+	for _, tool := range a.tools {
 		params = append(params, llmmodel.NewToolParamWithSchemaParam(
 			tool.Info().Name, tool.Info().Description, *tool.Info().Schema,
 		))
@@ -233,8 +240,8 @@ func (c *Agent) buildLLMToolParams() []llmmodel.ToolParam {
 	return params
 }
 
-func (c *Agent) RetrieveSession(channel channelmodel.Type, chatId string) ([]SessionMessage, error) {
-	history, err := c.contextMgr.sessionMgr.GetSessionHistory(channel, chatId)
+func (a *Agent) RetrieveSession(channel channelmodel.Type, chatId string) ([]SessionMessage, error) {
+	history, err := a.contextMgr.sessionMgr.GetSessionHistory(channel, chatId)
 	if err != nil {
 		return nil, err
 	}
