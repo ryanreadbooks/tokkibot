@@ -129,7 +129,7 @@ func Shell() tool.Invoker {
 
 		cmd := exec.CommandContext(ctx, name, args...)
 		if input.WorkingDir != "" {
-			cleanWd, _ := resolvePath(input.WorkingDir, "")
+			cleanWd, _ := resolvePath(input.WorkingDir, []string{})
 			cmd.Dir = cleanWd
 		}
 

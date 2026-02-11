@@ -268,4 +268,10 @@ func (o *OpenAI) ChatCompletion(ctx context.Context, req *llm.Request) (*llm.Res
 	}, nil
 }
 
-func (o *OpenAI) ChatCompletionStream(ctx context.Context) {}
+func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) (<-chan *llm.Response, error) {
+	params := toChatCompletionNewParams(req)
+	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
+
+	_ = stream
+	return nil, nil
+}

@@ -24,8 +24,8 @@ const (
 type AgentConfig struct {
 	RootCtx context.Context
 
-	// Workspace directory
-	Workspace string
+	// cwd
+	WorkingDir string
 
 	// The model to use.
 	Model string
@@ -77,10 +77,11 @@ func NewAgent(
 
 // register tools
 func (a *Agent) registerTools() {
-	a.RegisterTool(tools.ReadFile(a.c.Workspace))
-	a.RegisterTool(tools.WriteFile(a.c.Workspace))
-	a.RegisterTool(tools.ListDir(a.c.Workspace))
-	a.RegisterTool(tools.EditFile(a.c.Workspace))
+	allowDirs := []string{a.c.WorkingDir, config.GetConfigDir()}
+	a.RegisterTool(tools.ReadFile(allowDirs))
+	a.RegisterTool(tools.WriteFile(allowDirs))
+	a.RegisterTool(tools.ListDir(allowDirs))
+	a.RegisterTool(tools.EditFile(allowDirs))
 	a.RegisterTool(tools.Shell())
 }
 

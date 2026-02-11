@@ -89,7 +89,7 @@ func prepareAgent(ctx context.Context) (
 
 	ag = agent.NewAgent(llm, bus, agent.AgentConfig{
 		RootCtx:   ctx,
-		Workspace: cwd,
+		WorkingDir: cwd,
 		Model:     model,
 	})
 

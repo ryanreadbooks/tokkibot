@@ -46,5 +46,5 @@ type LLM interface {
 	ChatCompletion(ctx context.Context, req *Request) (*Response, error)
 
 	// TODO
-	ChatCompletionStream(ctx context.Context)
+	ChatCompletionStream(ctx context.Context, req *Request) (<-chan *Response, error)
 }

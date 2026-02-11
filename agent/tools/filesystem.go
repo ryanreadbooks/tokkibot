@@ -11,12 +11,15 @@ import (
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 )
 
-func resolvePath(path, allowDir string) (string, error) {
+func resolvePath(path string, allowDirs []string) (string, error) {
 	cleanPath := filepath.Clean(path)
-	if allowDir != "" {
-		if !strings.HasPrefix(cleanPath, allowDir) {
-			return "", fmt.Errorf("Path %s is outside of allowed directory %s", path, allowDir)
+	if len(allowDirs) > 0 {
+		for _, allowDir := range allowDirs {
+			if strings.HasPrefix(cleanPath, allowDir) {
+				return cleanPath, nil
+			}
 		}
+		return "", fmt.Errorf("Path %s is outside of allowed directories %v", path, allowDirs)
 	}
 
 	return cleanPath, nil
@@ -29,17 +32,13 @@ type ReadFileInput struct {
 // Tool to read a file contents.
 //
 // We restrict the directory to read from to avoid security issues.
-func ReadFile(allowDir string) tool.Invoker {
-	if allowDir != "" {
-		allowDir = filepath.Clean(allowDir)
-	}
-
+func ReadFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "read_file",
 		Description: "Read the contents of a file at the given path.",
 	}, func(ctx context.Context, input *ReadFileInput) (content string, err error) {
 		// now we can read the file
-		cleanPath, err := resolvePath(input.Path, allowDir)
+		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
 		}
@@ -59,16 +58,12 @@ type WriteFileInput struct {
 }
 
 // WriteFile tool to write content to a file at the given path.
-func WriteFile(allowDir string) tool.Invoker {
-	if allowDir != "" {
-		allowDir = filepath.Clean(allowDir)
-	}
-
+func WriteFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "write_file",
 		Description: "Write content to a file at the given path. Creates parent directories if necessary.",
 	}, func(ctx context.Context, input *WriteFileInput) (result string, err error) {
-		cleanPath, err := resolvePath(input.Path, allowDir)
+		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
 		}
@@ -92,16 +87,12 @@ type ListDirInput struct {
 	Path string `json:"path" jsonschema:"description=The path to the directory to list"`
 }
 
-func ListDir(allowDir string) tool.Invoker {
-	if allowDir != "" {
-		allowDir = filepath.Clean(allowDir)
-	}
-
+func ListDir(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "list_dir",
 		Description: "List the contents of a directory.",
 	}, func(ctx context.Context, input *ListDirInput) (result string, err error) {
-		cleanPath, err := resolvePath(input.Path, allowDir)
+		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
 		}
@@ -136,16 +127,16 @@ type EditFileInput struct {
 	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"description=Whether to replace all occurrences of the old string or just the first one"`
 }
 
-func EditFile(allowDir string) tool.Invoker {
-	if allowDir != "" {
-		allowDir = filepath.Clean(allowDir)
-	}
-
+func EditFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "edit_file",
 		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
 	}, func(ctx context.Context, input *EditFileInput) (result string, err error) {
-		cleanPath := filepath.Join(allowDir, input.FileName)
+		cleanPath, err := resolvePath(input.FileName, allowDirs)
+		if err != nil {
+			return "", err
+		}
+
 		f, err := os.OpenFile(cleanPath, os.O_RDWR, 0664)
 		if err != nil {
 			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)

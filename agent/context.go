@@ -26,6 +26,7 @@ type ContextManager struct {
 	historyInjectOnce sync.Once
 	messageList       []llmmodel.MessageParam
 	sessionMgr        *SessionManager
+	memoryMgr         *MemoryManager
 }
 
 type ContextManagerConfig struct {
@@ -37,8 +38,14 @@ func NewContextManage(ctx context.Context, c ContextManagerConfig) (*ContextMana
 		workspace:    c.workspace,
 		saveInterval: 10 * time.Second,
 	})
+
+	memoryMgr := NewMemoryManager(MemoryManagerConfig{
+		workspace: c.workspace,
+	})
+
 	mgr := &ContextManager{
 		sessionMgr: sessionMgr,
+		memoryMgr:  memoryMgr,
 	}
 
 	if err := mgr.bootstrapSystemPrompts(); err != nil {
@@ -48,12 +55,28 @@ func NewContextManage(ctx context.Context, c ContextManagerConfig) (*ContextMana
 	return mgr, nil
 }
 
-func (c *ContextManager) bootstrapSystemPrompts() error {
-	prompts := strings.Builder{}
-	prompts.Grow(512 * len(systemPromptList))
-	for idx, promptPath := range systemPromptList {
-		promptPath = filepath.Join(config.GetConfigDir(), promptPath)
+func (c *ContextManager) fillPromptsPlaceHolders(s string) string {
+	return strings.ReplaceAll(s, "{{workspace}}", config.GetConfigDir())
+}
 
+// System prompts bootstrap
+func (c *ContextManager) bootstrapSystemPrompts() error {
+	// System prompts structure:
+	//
+	// 	system built-in prompts
+	//
+	//  ---
+	//
+	//  memory prompts
+
+	const separator = "\n\n---\n\n"
+
+	prompts := strings.Builder{}
+	prompts.Grow(1024 * len(systemPromptList))
+
+	// system built-in prompts
+	for _, promptPath := range systemPromptList {
+		promptPath = filepath.Join(config.GetConfigDir(), promptPath)
 		content, err := os.ReadFile(promptPath)
 		if err != nil {
 			return err
@@ -64,16 +87,26 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 			return err
 		}
 
-		if idx < len(systemPromptList)-1 {
-			// add separator
-			_, err = prompts.WriteString("\n\n---\n\n")
-			if err != nil {
-				return err
-			}
+		// add separator
+		_, err = prompts.WriteString(separator)
+		if err != nil {
+			return err
 		}
 	}
 
+	// memory prompts
+	memoryPrompt, err := c.memoryMgr.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load memory prompts: %w", err)
+	}
+
+	prompts.WriteString(separator)
+	prompts.WriteString(memoryPrompt)
+
+	// TODO skill prompts
+
 	c.systemPrompts = prompts.String()
+	c.systemPrompts = c.fillPromptsPlaceHolders(c.systemPrompts)
 	// the first one is system prompt
 	c.messageList = append(c.messageList,
 		llmmodel.NewSystemMessageParam(c.systemPrompts),
