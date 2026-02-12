@@ -196,9 +196,14 @@ func toToolParamUnion(param *model.ToolParam) openai.ChatCompletionToolUnionPara
 
 func toChatCompletionNewParams(req *llm.Request) openai.ChatCompletionNewParams {
 	params := openai.ChatCompletionNewParams{
-		Model:       req.Model,
-		Temperature: openaiparam.NewOpt(req.Temperature),
-		MaxTokens:   openaiparam.NewOpt(req.MaxTokens),
+		Model: req.Model,
+		N:     openaiparam.NewOpt(max(1, req.N)),
+	}
+	if req.Temperature != -1 {
+		params.Temperature = openaiparam.NewOpt(req.Temperature)
+	}
+	if req.MaxTokens != -1 {
+		params.MaxTokens = openaiparam.NewOpt(req.MaxTokens)
 	}
 
 	for _, message := range req.Messages {
@@ -268,10 +273,85 @@ func (o *OpenAI) ChatCompletion(ctx context.Context, req *llm.Request) (*llm.Res
 	}, nil
 }
 
-func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) (<-chan *llm.Response, error) {
+func toStreamChoice(choice openai.ChatCompletionChunkChoice) model.StreamChoice {
+	toolCalls := make([]model.StreamChoiceDeltaToolCall, 0, len(choice.Delta.ToolCalls))
+	for _, tc := range choice.Delta.ToolCalls {
+		toolCalls = append(toolCalls, model.StreamChoiceDeltaToolCall{
+			Index: tc.Index,
+			Id:    tc.ID,
+			Type:  model.ToolCallType(tc.Type),
+			Function: model.CompletionToolCallFunction{
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			},
+		})
+	}
+
+	return model.StreamChoice{
+		FinishReason: model.FinishReason(choice.FinishReason),
+		Index:        choice.Index,
+		Delta: model.StreamChoiceDelta{
+			Role:      model.Role(choice.Delta.Role),
+			Content:   choice.Delta.Content,
+			ToolCalls: toolCalls,
+		},
+	}
+}
+
+func toStreamChoices(choices []openai.ChatCompletionChunkChoice) []model.StreamChoice {
+	chs := make([]model.StreamChoice, 0, len(choices))
+	for _, choice := range choices {
+		chs = append(chs, toStreamChoice(choice))
+	}
+	return chs
+}
+
+func toStreamResponseChunk(cur openai.ChatCompletionChunk) *llm.StreamResponseChunk {
+	chunk := llm.StreamResponseChunk{
+		Id:          cur.ID,
+		Created:     cur.Created,
+		Model:       cur.Model,
+		Object:      string(cur.Object.Default()),
+		Choices:     toStreamChoices(cur.Choices),
+		ServiceTier: string(cur.ServiceTier),
+		Usage: model.CompletionUsage{
+			CompletionTokens: cur.Usage.CompletionTokens,
+			PromptTokens:     cur.Usage.PromptTokens,
+			TotalTokens:      cur.Usage.TotalTokens,
+		},
+	}
+	return &chunk
+}
+
+func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) <-chan *llm.StreamResponseChunk {
 	params := toChatCompletionNewParams(req)
 	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
 
-	_ = stream
-	return nil, nil
+	ch := make(chan *llm.StreamResponseChunk, 1) // this should be buffered
+
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				ch <- &llm.StreamResponseChunk{Err: fmt.Errorf("panic: %v", p)}
+			}
+
+			stream.Close()
+			close(ch)
+		}()
+
+		// read in the background
+		for stream.Next() {
+			select {
+			case ch <- toStreamResponseChunk(stream.Current()):
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if stream.Err() != nil {
+			ch <- &llm.StreamResponseChunk{Err: stream.Err()}
+		}
+	}()
+
+	return ch
 }

@@ -17,3 +17,9 @@ func (c *Choice) IsLengthExceeded() bool {
 func (c *Choice) HasToolCalls() bool {
 	return c.FinishReason == FinishReasonToolCalls
 }
+
+type StreamChoice struct {
+	FinishReason FinishReason
+	Index        int64
+	Delta        StreamChoiceDelta
+}

@@ -20,3 +20,20 @@ func (m *CompletionMessage) GetToolCallParams() []*ToolCallParam {
 	}
 	return params
 }
+
+type StreamChoiceDelta struct {
+	Content   string
+	Role      Role
+	ToolCalls []StreamChoiceDeltaToolCall
+}
+
+type StreamChoiceDeltaToolCall struct {
+	Index    int64
+	Type     ToolCallType
+	Id       string
+	Function CompletionToolCallFunction
+}
+
+func (d *StreamChoiceDelta) HasToolCalls() bool {
+	return len(d.ToolCalls) > 0
+}

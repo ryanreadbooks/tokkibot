@@ -221,11 +221,8 @@ func (a *Agent) handleToolCall(
 
 func (a *Agent) buildLLMMessageRequest(inMsg *channelmodel.IncomingMessage) *llm.Request {
 	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId)
-	r := &llm.Request{
-		Model:    a.c.Model,
-		Messages: a.contextMgr.GetMessageList(),
-		Tools:    a.buildLLMToolParams(),
-	}
+	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
+	r.Tools = a.buildLLMToolParams()
 
 	return r
 }

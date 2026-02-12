@@ -12,12 +12,14 @@ import (
 	"github.com/ryanreadbooks/tokkibot/llm/model"
 )
 
-type GetWeatherInput struct {
+var testOpenAi *OpenAI
+
+type testGetWeatherInput struct {
 	Lat  float64 `json:"lat" jsonschema:"description=The latitude of the location to check weather"`
 	Long float64 `json:"long" jsonschema:"description=The longitude of the location to check weather"`
 }
 
-type GetWeatherResponse struct {
+type testGetWeatherResponse struct {
 	Latitude       float64 `json:"latitude"`
 	Longitude      float64 `json:"longitude"`
 	CurrentWeather struct {
@@ -32,7 +34,7 @@ type GetWeatherResponse struct {
 }
 
 // https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&current_weather=true
-func GetWeather(lat, long float64) (string, error) {
+func getTestWeather(lat, long float64) (string, error) {
 	url := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f&current_weather=true", lat, long)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -44,7 +46,7 @@ func GetWeather(lat, long float64) (string, error) {
 		return "", err
 	}
 
-	var response GetWeatherResponse
+	var response testGetWeatherResponse
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		return "", err
@@ -53,22 +55,28 @@ func GetWeather(lat, long float64) (string, error) {
 	return fmt.Sprintf("The weather in %f, %f is %f°C", lat, long, response.CurrentWeather.Temperature), nil
 }
 
-func TestChatCompletion(t *testing.T) {
+func TestMain(m *testing.M) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	baseURL := os.Getenv("OPENAI_BASE_URL")
 
 	if apiKey == "" || baseURL == "" {
-		t.Fatalf("OPENAI_API_KEY and OPENAI_BASE_URL are required")
+		fmt.Println("OPENAI_API_KEY and OPENAI_BASE_URL are required")
+		os.Exit(1)
 	}
 
-	openAi, err := New(Config{
+	var err error
+	testOpenAi, err = New(Config{
 		ApiKey:  apiKey,
 		BaseURL: baseURL,
 	})
 	if err != nil {
-		t.Fatalf("Failed to create LLM: %v", err)
+		fmt.Printf("Failed to create LLM: %v\n", err)
+		os.Exit(1)
 	}
+	m.Run()
+}
 
+func TestChatCompletion(t *testing.T) {
 	messages := []model.MessageParam{
 		model.NewSystemMessageParam("You are a helpful assistant."),
 		model.NewUserMessageParam(
@@ -76,7 +84,7 @@ func TestChatCompletion(t *testing.T) {
 	}
 
 	tools := []model.ToolParam{
-		model.NewToolParam[GetWeatherInput]("get_weather", "Get the weather for a given location"),
+		model.NewToolParam[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
 	}
 
 	ctx := t.Context()
@@ -87,7 +95,7 @@ func TestChatCompletion(t *testing.T) {
 	usage := model.CompletionUsage{}
 
 	for round := 0; round < maxRounds; round++ {
-		resp, err := openAi.ChatCompletion(ctx, &llm.Request{
+		resp, err := testOpenAi.ChatCompletion(ctx, &llm.Request{
 			Model:       defaultModel,
 			Temperature: 1.0,
 			Messages:    messages,
@@ -117,12 +125,12 @@ func TestChatCompletion(t *testing.T) {
 
 				// add assistant message to messages
 				// simulate append tool result to messages
-				var input GetWeatherInput
+				var input testGetWeatherInput
 				err := json.Unmarshal([]byte(toolCall.Function.Arguments), &input)
 				if err != nil {
 					messages = append(messages, model.NewToolMessageParam(toolCall.Id, fmt.Sprintf("Failed to unmarshal arguments: %v", err)))
 				} else {
-					result, err := GetWeather(input.Lat, input.Long)
+					result, err := getTestWeather(input.Lat, input.Long)
 					if err != nil {
 						messages = append(messages, model.NewToolMessageParam(toolCall.Id, fmt.Sprintf("Failed to get weather: %v", err)))
 					} else {
@@ -136,5 +144,63 @@ func TestChatCompletion(t *testing.T) {
 			fmt.Printf("Usage: %+v\n", usage)
 			break
 		}
+	}
+}
+
+func TestChatCompletionStream(t *testing.T) {
+	messages := []model.MessageParam{
+		model.NewSystemMessageParam("You are a helpful assistant."),
+		model.NewUserMessageParam("Give me a sentence about the weather in Shanghai, China."),
+	}
+
+	stream := testOpenAi.ChatCompletionStream(t.Context(), &llm.Request{
+		Model:       "kimi-k2-0905-preview",
+		Temperature: 1.0,
+		Messages:    messages,
+	})
+
+	for chunk := range stream {
+		if chunk.Err != nil {
+			fmt.Printf("Error: %v\n", chunk.Err)
+			break
+		} else {
+			fmt.Printf("Chunk: %s\n", chunk.FirstChoice().Delta.Content)
+		}
+	}
+}
+
+type testGetRandomListInput struct {
+	Seed int `json:"seed" jsonschema:"description=random seed number"`
+}
+
+type testGetRandomNameInput struct {
+	Name string `json:"name" jsonschema:"description=random name"`
+}
+
+func TestChatCompletionStreamWithTools(t *testing.T) {
+	messages := []model.MessageParam{
+		model.NewSystemMessageParam("You are a helpful assistant."),
+		model.NewUserMessageParam("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
+			"You generate the parameters for the tools. And explain why in short, less then 50 words"),
+	}
+
+	tools := []model.ToolParam{
+		model.NewToolParam[testGetRandomListInput]("get_random_list", "Return a random number."),
+		model.NewToolParam[testGetRandomNameInput]("get_random_name", "Return a random name."),
+	}
+
+	req := llm.NewRequest("kimi-k2-0905-preview", messages)
+	req.Tools = tools
+	req.N = 2
+	req.Temperature = 0.8
+	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
+
+	choices, err := llm.SyncWaitStreamResponse(stream)
+	if err != nil {
+		t.Fatalf("Failed to sync wait stream response: %v", err)
+	}
+
+	for _, choice := range choices {
+		fmt.Printf("Choice[%d]: %+v\n", choice.Index, choice)
 	}
 }
