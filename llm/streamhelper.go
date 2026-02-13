@@ -1,0 +1,248 @@
+package llm
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/ryanreadbooks/tokkibot/llm/model"
+	"github.com/ryanreadbooks/tokkibot/pkg/safe"
+	"github.com/ryanreadbooks/tokkibot/pkg/xmap"
+)
+
+func SyncReadStreamResponse(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error) {
+	// choice index -> choice
+	choicesMap := make(map[int64]model.StreamChoice)
+
+	// choice index -> tool call index -> tool call
+	choicesToolCallsMap := make(map[int64]map[int64]model.StreamChoiceDeltaToolCall)
+	for chunk := range ch {
+		if chunk.Err != nil {
+			return nil, chunk.Err
+		}
+
+		for _, choice := range chunk.Choices {
+			curIdx := choice.Index
+			if existing, ok := choicesMap[curIdx]; ok {
+				existing.Delta.Content += choice.Delta.Content
+				if choice.FinishReason != "" {
+					existing.FinishReason = model.FinishReason(choice.FinishReason)
+				}
+				choicesMap[curIdx] = existing
+			} else {
+				choicesMap[curIdx] = choice
+			}
+
+			if choice.Delta.HasToolCalls() {
+				for _, toolCall := range choice.Delta.ToolCalls {
+					if existing, ok := choicesToolCallsMap[curIdx]; ok {
+						if existingToolCall, ok := existing[toolCall.Index]; ok {
+							existingToolCall.Function.Arguments += toolCall.Function.Arguments
+							choicesToolCallsMap[curIdx][toolCall.Index] = existingToolCall
+						} else {
+							choicesToolCallsMap[curIdx][toolCall.Index] = toolCall
+						}
+					} else {
+						choicesToolCallsMap[curIdx] = make(map[int64]model.StreamChoiceDeltaToolCall)
+						choicesToolCallsMap[curIdx][toolCall.Index] = toolCall
+					}
+				}
+			}
+		}
+	}
+
+	// assign tool calls to corresponding choices
+	for idx, choice := range choicesMap {
+		if toolCalls, ok := choicesToolCallsMap[choice.Index]; ok {
+			tcs := xmap.Values(toolCalls)
+			old := choicesMap[idx]
+			old.Delta.ToolCalls = tcs
+
+			// sort tool calls by index
+			sort.Slice(old.Delta.ToolCalls, func(i, j int) bool {
+				return old.Delta.ToolCalls[i].Index < old.Delta.ToolCalls[j].Index
+			})
+			choicesMap[idx] = old
+		}
+	}
+
+	choices := xmap.Values(choicesMap)
+	sort.Slice(choices, func(i, j int) bool {
+		return choices[i].Index < choices[j].Index
+	})
+
+	return choices, nil
+}
+
+type toolCallBuffer struct {
+	Index     int64
+	Id        string
+	Name      string
+	Arguments *strings.Builder
+	Type      model.ToolCallType
+}
+
+type ToolCallHandler func(ctx context.Context, tc model.StreamChoiceDeltaToolCall)
+
+func onToolCallAccumulated(ctx context.Context, handler ToolCallHandler) func(tcbs []*toolCallBuffer) {
+	return func(tcbs []*toolCallBuffer) {
+		for _, tc := range tcbs {
+			handler(ctx, model.StreamChoiceDeltaToolCall{
+				Index: tc.Index,
+				Type:  tc.Type,
+				Id:    tc.Id,
+				Function: model.CompletionToolCallFunction{
+					Name:      tc.Name,
+					Arguments: tc.Arguments.String(),
+				},
+			})
+		}
+	}
+}
+
+type StreamContentChunk struct {
+	Content      string
+	FinishReason model.FinishReason
+}
+
+type StreamToolCallChunk struct {
+	Name             string
+	ArgumentFragment string
+}
+
+type StreamResponseChunkCollection struct {
+	ContentCh  <-chan *StreamContentChunk
+	ToolCallCh <-chan *StreamToolCallChunk
+}
+
+// We take the first choice forever. N > 1 not supported
+//
+// handler will be called in an other goroutine, so you don't need to open another goroutine for it.
+func StreamResponseChunkHandler(ctx context.Context,
+	ch <-chan *StreamResponseChunk,
+	handler ToolCallHandler,
+) *StreamResponseChunkCollection {
+	contentCh := make(chan *StreamContentChunk, 256) // try avoid blocking
+	toolCallCh := make(chan *StreamToolCallChunk, 256)
+
+	// when this goroutine finished, tool are already called, and content channel is closed.
+	safe.Go(func() {
+		readStreamResponseChunk(ctx, ch, contentCh, toolCallCh, onToolCallAccumulated(ctx, handler))
+	})
+
+	return &StreamResponseChunkCollection{
+		ContentCh:  contentCh,
+		ToolCallCh: toolCallCh,
+	}
+}
+
+func readStreamResponseChunk(
+	ctx context.Context,
+	ch <-chan *StreamResponseChunk,
+	contentCh chan<- *StreamContentChunk, // make sure it is closed when returned
+	toolCallCh chan<- *StreamToolCallChunk, // make sure it is closed when returned
+	onToolAccumulated func(tcbs []*toolCallBuffer),
+) {
+	var (
+		contentCloseOnce  sync.Once
+		toolCallCloseOnce sync.Once
+		tcBuffers         = make(map[int64]*toolCallBuffer)
+	)
+
+	closeContent := func() {
+		contentCloseOnce.Do(func() {
+			close(contentCh)
+		})
+	}
+	closeToolCall := func() {
+		toolCallCloseOnce.Do(func() {
+			close(toolCallCh)
+		})
+	}
+
+	defer closeContent()
+	defer closeToolCall()
+
+	for chunk := range ch {
+		if chunk.Err != nil {
+			contentCh <- &StreamContentChunk{
+				Content:      fmt.Sprintf("error: %v", chunk.Err),
+				FinishReason: model.FinishReasonStop,
+			}
+			break
+		}
+
+		curChoice := chunk.FirstChoice()
+		delta := curChoice.Delta
+
+		if curChoice.FinishReason.IsStopped() {
+			break
+		}
+
+		if delta.Content != "" {
+			select {
+			case contentCh <- &StreamContentChunk{
+				Content:      delta.Content,
+				FinishReason: curChoice.FinishReason,
+			}:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if delta.HasToolCalls() {
+			// we accumulate tool calls until we get the final tool call result
+			for _, tc := range delta.ToolCalls {
+				if buf, ok := tcBuffers[tc.Index]; ok {
+					buf.Arguments.WriteString(tc.Function.Arguments)
+					select {
+					case toolCallCh <- &StreamToolCallChunk{
+						Name:             buf.Name,
+						ArgumentFragment: tc.Function.Arguments,
+					}:
+					case <-ctx.Done():
+					default: // discard when full
+					}
+				} else {
+					var sb strings.Builder
+					sb.Grow(64)
+					sb.WriteString(tc.Function.Arguments)
+					// this is a new tool call, we create it
+					tcBuffers[tc.Index] = &toolCallBuffer{
+						Index:     tc.Index,
+						Name:      tc.Function.Name,
+						Arguments: &sb,
+						Id:        tc.Id,
+						Type:      tc.Type,
+					}
+					select {
+					case toolCallCh <- &StreamToolCallChunk{
+						Name:             tc.Function.Name,
+						ArgumentFragment: tc.Function.Arguments,
+					}:
+					case <-ctx.Done():
+					default: // discard when full
+					}
+				}
+			}
+		}
+
+		if curChoice.FinishReason.IsToolCalls() {
+			// tool call parameters are accumulated, we can call the tool now
+			break
+		}
+	}
+
+	if len(tcBuffers) > 0 {
+		if onToolAccumulated != nil {
+			// sort by index
+			sortedTcs := xmap.Values(tcBuffers)
+			sort.Slice(sortedTcs, func(i, j int) bool {
+				return sortedTcs[i].Index < sortedTcs[j].Index
+			})
+			onToolAccumulated(sortedTcs)
+		}
+	}
+}

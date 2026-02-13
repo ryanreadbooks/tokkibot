@@ -38,8 +38,12 @@ func (c *CliOutputChannel) Type() model.Type {
 }
 
 func (c *CliOutputChannel) Send(ctx context.Context, msg model.OutgoingMessage) error {
-	c.outputCh <- msg
-	return nil
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case c.outputCh <- msg:
+		return nil
+	}
 }
 
 func (c *CliOutputChannel) Wait(ctx context.Context) <-chan model.OutgoingMessage {

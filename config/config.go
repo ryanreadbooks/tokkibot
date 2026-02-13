@@ -34,7 +34,7 @@ func BootstrapConfig() Config {
 
 func LoadConfig() (c Config, err error) {
 	c = BootstrapConfig()
-	configPath, err := GetConfigPath()
+	configPath, err := GetWorkspaceConfigPath()
 	if err != nil {
 		err = fmt.Errorf("failed to get config path: %w", err)
 		return

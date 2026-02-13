@@ -2,6 +2,13 @@ package model
 
 import "fmt"
 
+type Control string
+
+const (
+	CtrlMsg  Control = "msg"
+	CtrlStop Control = "stop"
+)
+
 type IncomingMessage struct {
 	Channel Type
 	ChatId  string
@@ -19,4 +26,5 @@ type OutgoingMessage struct {
 	ChatId  string
 	Created int64 // unix timestamp in seconds
 	Content string
+	Ctrl    Control
 }

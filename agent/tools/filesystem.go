@@ -9,20 +9,26 @@ import (
 	"strings"
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/config"
 )
 
 func resolvePath(path string, allowDirs []string) (string, error) {
-	cleanPath := filepath.Clean(path)
-	if len(allowDirs) > 0 {
-		for _, allowDir := range allowDirs {
-			if strings.HasPrefix(cleanPath, allowDir) {
-				return cleanPath, nil
+	if filepath.IsAbs(path) {
+		cleanPath := filepath.Clean(path)
+		if len(allowDirs) > 0 {
+			for _, allowDir := range allowDirs {
+				if strings.HasPrefix(cleanPath, allowDir) {
+					return cleanPath, nil
+				}
 			}
+			return "", fmt.Errorf("Path %s is outside of allowed directories %v", path, allowDirs)
 		}
-		return "", fmt.Errorf("Path %s is outside of allowed directories %v", path, allowDirs)
+
+		return cleanPath, nil
 	}
 
-	return cleanPath, nil
+	// relative path
+	return filepath.Join(config.GetProjectDir(), filepath.Clean(path)), nil
 }
 
 type ReadFileInput struct {

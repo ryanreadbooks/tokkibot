@@ -5,17 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/config"
 	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
+
+	"github.com/mitchellh/mapstructure"
 )
+
+type promptBuiltinInfo struct {
+	Cwd             string // current working directory
+	Workspace       string // system workspace
+	Now             string
+	Runtime         string
+	AvailableSkills string
+}
 
 var systemPromptList = []string{
 	"prompts/AGENTS.md",
+	"prompts/IDENTITY.md",
 	"prompts/TOOLS.md",
 }
 
@@ -27,25 +41,24 @@ type ContextManager struct {
 	messageList       []llmmodel.MessageParam
 	sessionMgr        *SessionManager
 	memoryMgr         *MemoryManager
+	skillLoader       *skill.Loader
 }
 
 type ContextManagerConfig struct {
 	workspace string
 }
 
-func NewContextManage(ctx context.Context, c ContextManagerConfig) (*ContextManager, error) {
-	sessionMgr := NewSessionManager(ctx, SessionManagerConfig{
-		workspace:    c.workspace,
-		saveInterval: 10 * time.Second,
-	})
-
-	memoryMgr := NewMemoryManager(MemoryManagerConfig{
-		workspace: c.workspace,
-	})
-
+func NewContextManage(
+	ctx context.Context,
+	c ContextManagerConfig,
+	sessionManager *SessionManager,
+	memoryManager *MemoryManager,
+	skillLoader *skill.Loader,
+) (*ContextManager, error) {
 	mgr := &ContextManager{
-		sessionMgr: sessionMgr,
-		memoryMgr:  memoryMgr,
+		sessionMgr:  sessionManager,
+		memoryMgr:   memoryManager,
+		skillLoader: skillLoader,
 	}
 
 	if err := mgr.bootstrapSystemPrompts(); err != nil {
@@ -55,8 +68,30 @@ func NewContextManage(ctx context.Context, c ContextManagerConfig) (*ContextMana
 	return mgr, nil
 }
 
-func (c *ContextManager) fillPromptsPlaceHolders(s string) string {
-	return strings.ReplaceAll(s, "{{workspace}}", config.GetConfigDir())
+// Render placeholder variables in prompt.
+//
+// Available variables see [promptBuiltinInfo]
+func (c *ContextManager) renderPrompts(s string) string {
+	tmpl, err := template.New("prompts").Parse(s)
+	if err != nil {
+		panic(err)
+	}
+
+	builtinInfo := promptBuiltinInfo{
+		Cwd:             config.GetProjectDir(),
+		Workspace:       config.GetWorkspaceDir(),
+		Now:             time.Now().String(),
+		Runtime:         runtime.GOOS,
+		AvailableSkills: skill.SkillsAsPrompt(c.skillLoader.Skills()),
+	}
+
+	var bd strings.Builder
+	err = tmpl.Execute(&bd, builtinInfo)
+	if err != nil {
+		panic(err)
+	}
+
+	return bd.String()
 }
 
 // System prompts bootstrap
@@ -76,7 +111,7 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 
 	// system built-in prompts
 	for _, promptPath := range systemPromptList {
-		promptPath = filepath.Join(config.GetConfigDir(), promptPath)
+		promptPath = filepath.Join(config.GetWorkspaceDir(), promptPath)
 		content, err := os.ReadFile(promptPath)
 		if err != nil {
 			return err
@@ -99,14 +134,10 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	if err != nil {
 		return fmt.Errorf("failed to load memory prompts: %w", err)
 	}
-
-	prompts.WriteString(separator)
 	prompts.WriteString(memoryPrompt)
 
-	// TODO skill prompts
-
 	c.systemPrompts = prompts.String()
-	c.systemPrompts = c.fillPromptsPlaceHolders(c.systemPrompts)
+	c.systemPrompts = c.renderPrompts(c.systemPrompts)
 	// the first one is system prompt
 	c.messageList = append(c.messageList,
 		llmmodel.NewSystemMessageParam(c.systemPrompts),
@@ -129,12 +160,20 @@ func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId s
 				case llmmodel.RoleUser:
 					c.messageList = append(c.messageList, llmmodel.NewUserMessageParam(msg.Content))
 				case llmmodel.RoleAssistant:
-					val := msg.Extras["tool_calls"]
-					var toolCalls []*llmmodel.ToolCallParam
-					if tch, ok := val.([]llmmodel.CompletionToolCall); ok {
-						toolCalls = make([]*llmmodel.ToolCallParam, 0, len(tch))
-						for _, toolCall := range tch {
-							toolCalls = append(toolCalls, toolCall.ToToolCallParam())
+					val := msg.Extras["tool_calls"] // []map[string]any
+					var (
+						toolCalls           []*llmmodel.ToolCallParam
+						completionToolCalls []llmmodel.CompletionToolCall
+					)
+
+					err = mapstructure.Decode(val, &completionToolCalls)
+					if err == nil {
+						toolCalls = make([]*llmmodel.ToolCallParam, 0, len(completionToolCalls))
+						for _, toolCall := range completionToolCalls {
+							// we have to make sure tool call id exists
+							if toolCall.Id != "" {
+								toolCalls = append(toolCalls, toolCall.ToToolCallParam())
+							}
 						}
 					}
 					c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(msg.Content, toolCalls))

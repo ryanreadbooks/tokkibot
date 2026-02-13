@@ -1,11 +1,13 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/ryanreadbooks/tokkibot/llm"
@@ -195,7 +197,7 @@ func TestChatCompletionStreamWithTools(t *testing.T) {
 	req.Temperature = 0.8
 	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
 
-	choices, err := llm.SyncWaitStreamResponse(stream)
+	choices, err := llm.SyncReadStreamResponse(stream)
 	if err != nil {
 		t.Fatalf("Failed to sync wait stream response: %v", err)
 	}
@@ -203,4 +205,63 @@ func TestChatCompletionStreamWithTools(t *testing.T) {
 	for _, choice := range choices {
 		fmt.Printf("Choice[%d]: %+v\n", choice.Index, choice)
 	}
+}
+
+func TestChatCompletionStreamWithToolsHandler(t *testing.T) {
+	messages := []model.MessageParam{
+		model.NewSystemMessageParam("You are a helpful assistant."),
+		model.NewUserMessageParam("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
+			"You generate the parameters for the tools. And explain why in detail"),
+	}
+
+	tools := []model.ToolParam{
+		model.NewToolParam[testGetRandomListInput]("get_random_list", "Return a random number."),
+		model.NewToolParam[testGetRandomNameInput]("get_random_name", "Return a random name."),
+	}
+
+	req := llm.NewRequest("kimi-k2-0905-preview", messages)
+	req.Tools = tools
+	req.Temperature = 0.8
+
+	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
+
+	wg := sync.WaitGroup{}
+	contentChCollection := llm.StreamResponseChunkHandler(
+		t.Context(),
+		stream,
+		func(ctx context.Context, tc model.StreamChoiceDeltaToolCall) { // will be called in a new goroutine
+			fmt.Printf("Tool Call: %+v\n", tc)
+		})
+	contentCh := contentChCollection.ContentCh
+	toolCallCh := contentChCollection.ToolCallCh
+
+	wg.Add(1)
+	fmt.Println("Model is thinking...")
+	go func() {
+		defer wg.Done()
+		for content := range contentCh {
+			fmt.Print(content.Content)
+			os.Stdout.Sync()
+		}
+
+		fmt.Println("\nDone thinking...")
+	}()
+
+	wg.Add(1)
+	fmt.Println("Gather tools calls parameters...")
+	init := make(map[string]struct{})
+	go func() {
+		defer wg.Done()
+		for toolCall := range toolCallCh {
+			if _, ok := init[toolCall.Name]; !ok {
+				init[toolCall.Name] = struct{}{}
+				fmt.Printf("%s:\n", toolCall.Name)
+			} else {
+				fmt.Printf("%s", toolCall.ArgumentFragment)
+			}
+		}
+	}()
+
+	wg.Wait()
+	fmt.Println("All done")
 }

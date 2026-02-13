@@ -17,6 +17,10 @@ import (
 	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
 )
 
+func getSessionFileName(sessionId string) string {
+	return sessionId + ".jsonl"
+}
+
 func getSessionKey(channel channelmodel.Type, chatId string) string {
 	return fmt.Sprintf("%s_%s", channel, chatId)
 }
@@ -63,7 +67,7 @@ type Session struct {
 }
 
 func (s *Session) retrieve(dir string) ([]SessionMessage, error) {
-	path := filepath.Join(dir, s.sessionId+".json")
+	path := filepath.Join(dir, getSessionFileName(s.sessionId))
 
 	f, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
@@ -99,7 +103,7 @@ func (s *Session) clear() {
 
 func (s *Session) save(dir string) error {
 	// append to the session file
-	path := filepath.Join(dir, s.sessionId+".json")
+	path := filepath.Join(dir, getSessionFileName(s.sessionId))
 	err := os.MkdirAll(filepath.Dir(path), 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directories for %s: %w", path, err)

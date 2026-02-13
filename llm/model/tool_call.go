@@ -7,9 +7,9 @@ const (
 )
 
 type CompletionToolCall struct {
-	Id       string                     `json:"id"`
-	Type     ToolCallType               `json:"type"`
-	Function CompletionToolCallFunction `json:"function"`
+	Id       string                     `json:"id" mapstructure:"id"`
+	Type     ToolCallType               `json:"type" mapstructure:"type"`
+	Function CompletionToolCallFunction `json:"function" mapstructure:"function"`
 }
 
 func (t *CompletionToolCall) ToToolCallParam() *ToolCallParam {

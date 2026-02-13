@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/pkg/bash"
 	"github.com/ryanreadbooks/tokkibot/pkg/os"
 )
 
@@ -22,9 +22,6 @@ type shellResultTag string
 const (
 	shellBlockedTag shellResultTag = "<shell_blocked>"
 	shellRunErrTag  shellResultTag = "<shell_run_error>"
-	shellStdoutTag  shellResultTag = "<shell_stdout>"
-	shellStderrTag  shellResultTag = "<shell_stderr>"
-	shellTimeoutTag shellResultTag = "<shell_timeout>"
 )
 
 var errDangerousCommand = errors.New("dangerous command blocked")
@@ -49,62 +46,6 @@ func safeCheckShellCommand(command string) error {
 	return nil
 }
 
-// parseCommand parses a command string into command name and arguments.
-// It handles quoted arguments (single and double quotes) and escaped characters.
-func parseCommand(input string) (name string, args []string) {
-	var tokens []string
-	var current strings.Builder
-	var inSingleQuote, inDoubleQuote, escaped bool
-
-	for _, r := range input {
-		if escaped {
-			current.WriteRune(r)
-			escaped = false
-			continue
-		}
-
-		switch r {
-		case '\\':
-			if inSingleQuote {
-				current.WriteRune(r)
-			} else {
-				escaped = true
-			}
-		case '\'':
-			if inDoubleQuote {
-				current.WriteRune(r)
-			} else {
-				inSingleQuote = !inSingleQuote
-			}
-		case '"':
-			if inSingleQuote {
-				current.WriteRune(r)
-			} else {
-				inDoubleQuote = !inDoubleQuote
-			}
-		case ' ', '\t':
-			if inSingleQuote || inDoubleQuote {
-				current.WriteRune(r)
-			} else if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteRune(r)
-		}
-	}
-
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
-	}
-
-	if len(tokens) == 0 {
-		return "", nil
-	}
-
-	return tokens[0], tokens[1:]
-}
-
 // Tool to execute a command under the optional given working directory.
 func Shell() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
@@ -119,7 +60,7 @@ func Shell() tool.Invoker {
 			return "", wrapShellError(err, shellBlockedTag)
 		}
 
-		name, args := parseCommand(input.Command)
+		name, args := bash.ParseCommand(input.Command)
 		if name == "" {
 			return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
 		}
@@ -133,45 +74,19 @@ func Shell() tool.Invoker {
 			cmd.Dir = cleanWd
 		}
 
-		// redirect stdout and stderr
-		var redirectStdout, redirectStderr strings.Builder
-		cmd.Stdout = &redirectStdout
-		cmd.Stderr = &redirectStderr
-
-		err = cmd.Run()
+		output, err := cmd.CombinedOutput()
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return "", wrapShellError(err, shellTimeoutTag)
-			}
-
-			return "", wrapShellError(err, shellRunErrTag)
+			return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
 		}
 
-		var combinedBuilder strings.Builder
-		stdout := redirectStdout.String()
-		stderr := redirectStderr.String()
-		combinedBuilder.Grow(len(stdout) + len(stderr))
-		if len(stdout) > 0 {
-			combinedBuilder.WriteString(string(shellStdoutTag))
-			combinedBuilder.WriteString(stdout)
-			combinedBuilder.WriteString(string(shellStdoutTag))
-			combinedBuilder.WriteString("\n")
-		}
-		if len(stderr) > 0 {
-			combinedBuilder.WriteString(string(shellStderrTag))
-			combinedBuilder.WriteString(stderr)
-			combinedBuilder.WriteString(string(shellStderrTag))
-			combinedBuilder.WriteString("\n")
+		outputStr := string(output)
+
+		// truncate output
+		if len(outputStr) > maxAllowedShellOutputLen {
+			more := len(output) - maxAllowedShellOutputLen
+			outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
 		}
 
-		combinedOutput := combinedBuilder.String()
-
-		// we may need to truncated the final output
-		if lenCombinedOutput := len(combinedOutput); lenCombinedOutput > maxAllowedShellOutputLen {
-			more := lenCombinedOutput - maxAllowedShellOutputLen
-			combinedOutput = combinedOutput[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
-		}
-
-		return combinedOutput, nil
+		return string(output), nil
 	})
 }

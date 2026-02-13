@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 
 	"github.com/ryanreadbooks/tokkibot/config"
-	"gopkg.in/yaml.v3"
+	"github.com/ryanreadbooks/tokkibot/workspace"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var OnboardCmd = &cobra.Command{
@@ -18,36 +19,28 @@ var OnboardCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := runOnboard(args)
 		if err != nil {
-			// LOGGING
+			return fmt.Errorf("failed to run onboard: %w", err)
 		}
 
 		return nil
 	},
 }
 
-func runOnboard(_ []string) error {
-	configPath, err := config.GetConfigPath()
-	if err != nil {
-		return fmt.Errorf("failed to get config path: %w", err)
-	}
-
-	dir := filepath.Dir(configPath)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, 0755)
-		if err != nil {
-			return fmt.Errorf("failed to create config directory at %s: %w", dir, err)
-		}
-	}
-
+func bootstrapConfig(configPath string) error {
 	// check file exists, ask user if they want to overwrite
+	doInit := true
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		// ask user if they want to overwrite
 		fmt.Printf("Config file already exists at %s, do you want to overwrite it? (y/n): ", configPath)
 		var overwrite string
 		fmt.Scanln(&overwrite)
-		if overwrite != "y" {
-			return nil
+		if overwrite != "y" && overwrite != "Y" {
+			doInit = false
 		}
+	}
+
+	if !doInit {
+		return nil
 	}
 
 	cfg := config.BootstrapConfig()
@@ -63,32 +56,87 @@ func runOnboard(_ []string) error {
 
 	fmt.Printf("Configuration written to %s\n", configPath)
 
+	return nil
+}
+
+func bootstrapPrompts(workspaceDir string) error {
 	// prompts file init
-	promptsPath := filepath.Join(dir, "prompts")
-	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
-		err = os.MkdirAll(promptsPath, 0755)
+	targetPromptPath := filepath.Join(workspaceDir, "prompts")
+	if _, err := os.Stat(targetPromptPath); os.IsNotExist(err) {
+		err = os.MkdirAll(targetPromptPath, 0755)
 		if err != nil {
-			return fmt.Errorf("failed to create prompts directory at %s: %w", promptsPath, err)
+			return fmt.Errorf("failed to create prompts directory at %s: %w", targetPromptPath, err)
+		}
+	}
+	// first check prompt folder exists and not empty
+	targetPromptDir, err := os.ReadDir(targetPromptPath)
+	if err != nil {
+		return fmt.Errorf("failed to read prompt directory at %s: %w", targetPromptPath, err)
+	}
+
+	doInit := true
+	if len(targetPromptDir) > 0 {
+		fmt.Printf("Prompt files already exist at %s, do you want to overwrite them? (y/n): ", targetPromptPath)
+		var overwrite string
+		fmt.Scanln(&overwrite)
+		if overwrite != "y" && overwrite != "Y" {
+			doInit = false
 		}
 	}
 
-	promptsFiles := []string{
-		"AGENTS.md",
+	if !doInit {
+		return nil
 	}
 
-	for _, promptFile := range promptsFiles {
-		promptContent, err := os.ReadFile(filepath.Join("workspace", "prompts", promptFile))
-		if err != nil {
-			return fmt.Errorf("failed to read prompt file %s: %w", promptFile, err)
+	promptFiles, err := workspace.PromptsFs.ReadDir("prompts")
+	if err != nil {
+		return fmt.Errorf("failed to read prompt files: %w", err)
+	}
+
+	for _, promptFile := range promptFiles {
+		if promptFile.IsDir() {
+			continue
 		}
 
-		err = os.WriteFile(filepath.Join(promptsPath, promptFile), promptContent, 0644)
+		// file
+		filePath := filepath.Join("prompts", promptFile.Name())
+		content, err := workspace.PromptsFs.ReadFile(filePath)
 		if err != nil {
-			return fmt.Errorf("failed to write prompt file %s: %w", promptFile, err)
+			return fmt.Errorf("failed to read prompt file %s: %w", filePath, err)
+		}
+
+		err = os.WriteFile(filepath.Join(targetPromptPath, promptFile.Name()), content, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write prompt file %s: %w", filePath, err)
 		}
 	}
 
-	fmt.Printf("Prompts written to %s\n", promptsPath)
+	fmt.Printf("Prompt files written to %s\n", targetPromptPath)
+
+	return nil
+}
+
+func runOnboard(_ []string) error {
+	configPath, err := config.GetWorkspaceConfigPath()
+	if err != nil {
+		return fmt.Errorf("failed to get config path: %w", err)
+	}
+
+	workspaceDir := filepath.Dir(configPath)
+	if _, err := os.Stat(workspaceDir); os.IsNotExist(err) {
+		err = os.MkdirAll(workspaceDir, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create config directory at %s: %w", workspaceDir, err)
+		}
+	}
+
+	if err := bootstrapConfig(configPath); err != nil {
+		return fmt.Errorf("failed to bootstrap config: %w", err)
+	}
+
+	if err := bootstrapPrompts(workspaceDir); err != nil {
+		return fmt.Errorf("failed to bootstrap prompts: %w", err)
+	}
 
 	return nil
 }

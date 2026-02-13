@@ -8,29 +8,45 @@ import (
 )
 
 var (
-	homeDir     string
-	homeDirOnce sync.Once
+	workspaceDir     string
+	workspaceDirOnce sync.Once
+
+	projectDir     string
+	projectDirOnce sync.Once
 )
 
 func Init() {
-	GetConfigDir()
+	GetWorkspaceDir()
+	GetProjectDir()
 }
 
 const configFileName = "config.yaml"
 
-func GetConfigDir() string {
-	homeDirOnce.Do(func() {
+func GetWorkspaceDir() string {
+	workspaceDirOnce.Do(func() {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			panic(err)
 		}
-		homeDir = filepath.Join(home, ".tokkibot")
+		workspaceDir = filepath.Join(home, ".tokkibot")
 	})
 
-	return homeDir
+	return workspaceDir
 }
 
-func GetConfigPath() (string, error) {
+func GetProjectDir() string {
+	projectDirOnce.Do(func() {
+		cwd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		projectDir = cwd
+	})
+
+	return projectDir
+}
+
+func GetWorkspaceConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)

@@ -86,11 +86,45 @@ Execute a shell command under the optional given working directory.
 ```
 
 **Notes:**
-- Dangerous commands are blocked for safety (e.g., `rm -rf`, `format`, `shutdown`)
-- Output is wrapped in `<shell_stdout>` and `<shell_stderr>` tags. Other possible tags are <shell_blocked>, <shell_run_error>, etc.
+- Dangerous commands are blocked for safety (e.g., `rm -rf`, `shutdown`)
+- On error, output is wrapped in `<shell_blocked>` (command rejected) or `<shell_run_error>` (execution failed) tags
 - Output longer than 15000 characters will be truncated
-- Max shell execution time is 60 seconds.
-- You are encouraged to get current working directory before executing any shell commands even if current working directory will not be used.
+- Max execution time is 60 seconds
+
+## use_skill
+
+Use a skill by name and perform an action on it. Skills extend your capabilities with domain-specific knowledge, resources, or scripts.
+
+**Parameters:**
+- `name` (required): The name of the skill to use
+- `action` (required): The action to perform, one of:
+  - `activate` - Load the full skill content from SKILL.md
+  - `load` - Load specified resources (references, assets, etc.)
+  - `script` - Execute a script defined in the skill
+- `args` (required for `load`, `script`): Arguments for the action. Comma-separated paths for load (e.g., `references/guide.md,assets/template.yaml`), command line for script
+
+**Examples:**
+
+Activate a skill:
+```json
+{"name": "name_of_skill", "action": "activate"}
+```
+
+Load specific resources:
+```json
+{"name": "name_of_skill", "action": "load", "args": "references/deployment.md,assets/dockerfile"}
+```
+
+Execute a skill script:
+```json
+{"name": "name_of_skill", "action": "script", "args": "python analyze.py --target src/"}
+```
+
+**Notes:**
+- Skills are loaded from system workspace (`~/.tokkibot/skills/`) or project directory (`.tokkibot/skills/`)
+- Project skills take precedence over system skills with the same name
+- Use `activate` first to understand what a skill offers before using other actions
+- Only use skills that have been explicitly loaded or listed as available
 
 ## Tool Usage Guidelines
 
@@ -103,4 +137,3 @@ Execute a shell command under the optional given working directory.
 4. **Path handling**: Use absolute paths when possible for clarity and reliability.
 
 5. **Scenarios**: You can use shell command like grep to find specific text in a file, etc.
-
