@@ -292,7 +292,7 @@ type toolCallAndResult struct {
 //
 // This method will be called when one tool call response is completed.
 // Tool call will be invoked from another goroutine.
-func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) llm.ToolCallHandler {
+func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) llm.StreamToolCallHandler {
 	dstTcsMu := sync.Mutex{}
 	return func(ctx context.Context, tc llmmodel.StreamChoiceDeltaToolCall) {
 		// invoke tool
@@ -336,10 +336,10 @@ func (a *Agent) handleIncomingMessageStream(
 		)
 		// call llm the stream way
 		llmRespCh := a.llm.ChatCompletionStream(ctx, llmReq)
-		chanCollection := llm.StreamResponseChunkHandler(ctx, llmRespCh, a.handleStreamingToolCall(&dstTcs))
+		chanCollection := llm.StreamResponseHandler(ctx, llmRespCh, a.handleStreamingToolCall(&dstTcs))
 
 		wg.Go(func() {
-			for content := range chanCollection.ContentCh {
+			for content := range chanCollection.Content {
 				err := outChan.Send(ctx, chmodel.OutgoingMessage{
 					Ctrl:    chmodel.CtrlMsg,
 					Channel: inMsg.Channel,
@@ -355,7 +355,7 @@ func (a *Agent) handleIncomingMessageStream(
 		})
 
 		wg.Go(func() {
-			for toolCall := range chanCollection.ToolCallCh {
+			for toolCall := range chanCollection.ToolCall {
 				for _, fn := range a.toolCallingSubscribers {
 					fn(toolCall.Name, toolCall.ArgumentFragment, ThinkingStateThinking)
 				}

@@ -20,6 +20,8 @@ type Request struct {
 
 	// number of responses to generate, default to 1
 	N int64
+
+	Thinking *model.Thinking
 }
 
 func NewRequest(model string, messages []model.MessageParam) *Request {

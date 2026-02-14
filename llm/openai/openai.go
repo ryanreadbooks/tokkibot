@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/ryanreadbooks/tokkibot/llm"
@@ -11,6 +12,10 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	openaiparam "github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
+)
+
+const (
+	reasoningContentKey = "reasoning_content"
 )
 
 var _ llm.LLM = (*OpenAI)(nil)
@@ -194,10 +199,13 @@ func toToolParamUnion(param *model.ToolParam) openai.ChatCompletionToolUnionPara
 	return tool
 }
 
-func toChatCompletionNewParams(req *llm.Request) openai.ChatCompletionNewParams {
+func toChatCompletionNewParams(req *llm.Request) (openai.ChatCompletionNewParams, []option.RequestOption) {
 	params := openai.ChatCompletionNewParams{
 		Model: req.Model,
 		N:     openaiparam.NewOpt(max(1, req.N)),
+		StreamOptions: openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openaiparam.NewOpt(true),
+		},
 	}
 	if req.Temperature != -1 {
 		params.Temperature = openaiparam.NewOpt(req.Temperature)
@@ -214,7 +222,12 @@ func toChatCompletionNewParams(req *llm.Request) openai.ChatCompletionNewParams 
 		params.Tools = append(params.Tools, toToolParamUnion(&tool))
 	}
 
-	return params
+	opts := []option.RequestOption{}
+	if req.Thinking != nil {
+		opts = append(opts, option.WithJSONSet("thinking", req.Thinking))
+	}
+
+	return params, opts
 }
 
 func toChoice(choice openai.ChatCompletionChoice) model.Choice {
@@ -230,13 +243,19 @@ func toChoice(choice openai.ChatCompletionChoice) model.Choice {
 		})
 	}
 
+	reasoningContent := choice.Message.JSON.ExtraFields[reasoningContentKey]
+	var rs string
+	_ = json.Unmarshal([]byte(reasoningContent.Raw()), &rs)
+
+	// for custom field not supported by official openai sdk
 	return model.Choice{
 		FinishReason: model.FinishReason(choice.FinishReason),
 		Index:        choice.Index,
 		Message: model.CompletionMessage{
-			Role:      model.Role(choice.Message.Role),
-			Content:   choice.Message.Content,
-			ToolCalls: toolCalls,
+			Role:             model.Role(choice.Message.Role),
+			Content:          choice.Message.Content,
+			ReasoningContent: rs,
+			ToolCalls:        toolCalls,
 		},
 	}
 }
@@ -252,8 +271,8 @@ func toChoices(choices []openai.ChatCompletionChoice) []model.Choice {
 }
 
 func (o *OpenAI) ChatCompletion(ctx context.Context, req *llm.Request) (*llm.Response, error) {
-	params := toChatCompletionNewParams(req)
-	resp, err := o.client.Chat.Completions.New(ctx, params)
+	params, opts := toChatCompletionNewParams(req)
+	resp, err := o.client.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion new: %w", err)
 	}
@@ -287,13 +306,18 @@ func toStreamChoice(choice openai.ChatCompletionChunkChoice) model.StreamChoice 
 		})
 	}
 
+	reasoningContent := choice.Delta.JSON.ExtraFields[reasoningContentKey]
+	var rs string
+	_ = json.Unmarshal([]byte(reasoningContent.Raw()), &rs)
+
 	return model.StreamChoice{
 		FinishReason: model.FinishReason(choice.FinishReason),
 		Index:        choice.Index,
 		Delta: model.StreamChoiceDelta{
-			Role:      model.Role(choice.Delta.Role),
-			Content:   choice.Delta.Content,
-			ToolCalls: toolCalls,
+			Role:             model.Role(choice.Delta.Role),
+			Content:          choice.Delta.Content,
+			ToolCalls:        toolCalls,
+			ReasoningContent: rs,
 		},
 	}
 }
@@ -324,8 +348,8 @@ func toStreamResponseChunk(cur openai.ChatCompletionChunk) *llm.StreamResponseCh
 }
 
 func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) <-chan *llm.StreamResponseChunk {
-	params := toChatCompletionNewParams(req)
-	stream := o.client.Chat.Completions.NewStreaming(ctx, params)
+	params, opts := toChatCompletionNewParams(req)
+	stream := o.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 
 	ch := make(chan *llm.StreamResponseChunk, 16) // this should be buffered
 

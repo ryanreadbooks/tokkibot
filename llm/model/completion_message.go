@@ -2,8 +2,9 @@ package model
 
 // completion message responsed from LLM service
 type CompletionMessage struct {
-	Content   string
-	ToolCalls []CompletionToolCall
+	Content          string
+	ReasoningContent string
+	ToolCalls        []CompletionToolCall
 
 	// assistant message only
 	Role Role
@@ -22,9 +23,10 @@ func (m *CompletionMessage) GetToolCallParams() []*ToolCallParam {
 }
 
 type StreamChoiceDelta struct {
-	Content   string
-	Role      Role
-	ToolCalls []StreamChoiceDeltaToolCall
+	Content          string
+	ReasoningContent string
+	Role             Role
+	ToolCalls        []StreamChoiceDeltaToolCall
 }
 
 type StreamChoiceDeltaToolCall struct {

@@ -12,7 +12,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/pkg/xmap"
 )
 
-func SyncReadStreamResponse(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error) {
+func SyncReadStream(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error) {
 	// choice index -> choice
 	choicesMap := make(map[int64]model.StreamChoice)
 
@@ -76,7 +76,7 @@ func SyncReadStreamResponse(ch <-chan *StreamResponseChunk) ([]model.StreamChoic
 	return choices, nil
 }
 
-type toolCallBuffer struct {
+type streamToolCallBuffer struct {
 	Index     int64
 	Id        string
 	Name      string
@@ -84,10 +84,25 @@ type toolCallBuffer struct {
 	Type      model.ToolCallType
 }
 
-type ToolCallHandler func(ctx context.Context, tc model.StreamChoiceDeltaToolCall)
+type StreamToolCallHandler func(ctx context.Context, tc model.StreamChoiceDeltaToolCall)
 
-func onToolCallAccumulated(ctx context.Context, handler ToolCallHandler) func(tcbs []*toolCallBuffer) {
-	return func(tcbs []*toolCallBuffer) {
+type StreamContentFragment struct {
+	Content      string
+	FinishReason model.FinishReason
+}
+
+type StreamToolCallFragment struct {
+	Name             string
+	ArgumentFragment string
+}
+
+type StreamResponsePack struct {
+	Content  <-chan *StreamContentFragment
+	ToolCall <-chan *StreamToolCallFragment
+}
+
+func onStreamToolCallAccumulated(ctx context.Context, handler StreamToolCallHandler) func(tcbs []*streamToolCallBuffer) {
+	return func(tcbs []*streamToolCallBuffer) {
 		for _, tc := range tcbs {
 			handler(ctx, model.StreamChoiceDeltaToolCall{
 				Index: tc.Index,
@@ -102,53 +117,38 @@ func onToolCallAccumulated(ctx context.Context, handler ToolCallHandler) func(tc
 	}
 }
 
-type StreamContentChunk struct {
-	Content      string
-	FinishReason model.FinishReason
-}
-
-type StreamToolCallChunk struct {
-	Name             string
-	ArgumentFragment string
-}
-
-type StreamResponseChunkCollection struct {
-	ContentCh  <-chan *StreamContentChunk
-	ToolCallCh <-chan *StreamToolCallChunk
-}
-
 // We take the first choice forever. N > 1 not supported
 //
 // handler will be called in an other goroutine, so you don't need to open another goroutine for it.
-func StreamResponseChunkHandler(ctx context.Context,
+func StreamResponseHandler(ctx context.Context,
 	ch <-chan *StreamResponseChunk,
-	handler ToolCallHandler,
-) *StreamResponseChunkCollection {
-	contentCh := make(chan *StreamContentChunk, 256) // try avoid blocking
-	toolCallCh := make(chan *StreamToolCallChunk, 256)
+	handler StreamToolCallHandler,
+) *StreamResponsePack {
+	contentCh := make(chan *StreamContentFragment, 256) // try avoid blocking
+	toolCallCh := make(chan *StreamToolCallFragment, 256)
 
 	// when this goroutine finished, tool are already called, and content channel is closed.
 	safe.Go(func() {
-		readStreamResponseChunk(ctx, ch, contentCh, toolCallCh, onToolCallAccumulated(ctx, handler))
+		readStreamResponseChunk(ctx, ch, contentCh, toolCallCh, onStreamToolCallAccumulated(ctx, handler))
 	})
 
-	return &StreamResponseChunkCollection{
-		ContentCh:  contentCh,
-		ToolCallCh: toolCallCh,
+	return &StreamResponsePack{
+		Content:  contentCh,
+		ToolCall: toolCallCh,
 	}
 }
 
 func readStreamResponseChunk(
 	ctx context.Context,
 	ch <-chan *StreamResponseChunk,
-	contentCh chan<- *StreamContentChunk, // make sure it is closed when returned
-	toolCallCh chan<- *StreamToolCallChunk, // make sure it is closed when returned
-	onToolAccumulated func(tcbs []*toolCallBuffer),
+	contentCh chan<- *StreamContentFragment, // make sure it is closed when returned
+	toolCallCh chan<- *StreamToolCallFragment, // make sure it is closed when returned
+	onToolAccumulated func(tcbs []*streamToolCallBuffer),
 ) {
 	var (
 		contentCloseOnce  sync.Once
 		toolCallCloseOnce sync.Once
-		tcBuffers         = make(map[int64]*toolCallBuffer)
+		tcBuffers         = make(map[int64]*streamToolCallBuffer)
 	)
 
 	closeContent := func() {
@@ -167,7 +167,7 @@ func readStreamResponseChunk(
 
 	for chunk := range ch {
 		if chunk.Err != nil {
-			contentCh <- &StreamContentChunk{
+			contentCh <- &StreamContentFragment{
 				Content:      fmt.Sprintf("error: %v", chunk.Err),
 				FinishReason: model.FinishReasonStop,
 			}
@@ -183,7 +183,7 @@ func readStreamResponseChunk(
 
 		if delta.Content != "" {
 			select {
-			case contentCh <- &StreamContentChunk{
+			case contentCh <- &StreamContentFragment{
 				Content:      delta.Content,
 				FinishReason: curChoice.FinishReason,
 			}:
@@ -198,7 +198,7 @@ func readStreamResponseChunk(
 				if buf, ok := tcBuffers[tc.Index]; ok {
 					buf.Arguments.WriteString(tc.Function.Arguments)
 					select {
-					case toolCallCh <- &StreamToolCallChunk{
+					case toolCallCh <- &StreamToolCallFragment{
 						Name:             buf.Name,
 						ArgumentFragment: tc.Function.Arguments,
 					}:
@@ -210,7 +210,7 @@ func readStreamResponseChunk(
 					sb.Grow(64)
 					sb.WriteString(tc.Function.Arguments)
 					// this is a new tool call, we create it
-					tcBuffers[tc.Index] = &toolCallBuffer{
+					tcBuffers[tc.Index] = &streamToolCallBuffer{
 						Index:     tc.Index,
 						Name:      tc.Function.Name,
 						Arguments: &sb,
@@ -218,7 +218,7 @@ func readStreamResponseChunk(
 						Type:      tc.Type,
 					}
 					select {
-					case toolCallCh <- &StreamToolCallChunk{
+					case toolCallCh <- &StreamToolCallFragment{
 						Name:             tc.Function.Name,
 						ArgumentFragment: tc.Function.Arguments,
 					}:

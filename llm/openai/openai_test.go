@@ -78,6 +78,35 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
+func TestChatCompletionSingleRound(t *testing.T) {
+	messages := []model.MessageParam{
+		model.NewSystemMessageParam("You are a helpful assistant."),
+		model.NewUserMessageParam(
+			"Please get the weather in Shanghai, China, use approximate latitude and longitude, and return the weather in the format of 'The weather in xx is yy°C'"),
+	}
+
+	tools := []model.ToolParam{
+		model.NewToolParam[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
+	}
+
+	ctx := t.Context()
+	defaultModel := "kimi-k2.5"
+
+	resp, err := testOpenAi.ChatCompletion(ctx, &llm.Request{
+		Model:       defaultModel,
+		Messages:    messages,
+		Temperature: 1,
+		Tools:       tools,
+		Thinking:    model.EnableThinking(),
+	})
+	if err != nil {
+		t.Fatalf("Failed to chat completion: %v", err)
+	}
+
+	output, _ := json.MarshalIndent(resp, "", " ")
+	println(string(output))
+}
+
 func TestChatCompletion(t *testing.T) {
 	messages := []model.MessageParam{
 		model.NewSystemMessageParam("You are a helpful assistant."),
@@ -90,18 +119,19 @@ func TestChatCompletion(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	defaultModel := "kimi-k2-0905-preview"
+	defaultModel := "kimi-k2.5"
 
 	maxRounds := 10
 
 	usage := model.CompletionUsage{}
 
-	for round := 0; round < maxRounds; round++ {
+	for round := range maxRounds {
 		resp, err := testOpenAi.ChatCompletion(ctx, &llm.Request{
 			Model:       defaultModel,
-			Temperature: 1.0,
 			Messages:    messages,
+			Temperature: 0.6,
 			Tools:       tools,
+			Thinking:    model.DisableThinking(),
 		})
 		if err != nil {
 			t.Fatalf("Failed to chat completion: %v", err)
@@ -197,7 +227,7 @@ func TestChatCompletionStreamWithTools(t *testing.T) {
 	req.Temperature = 0.8
 	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
 
-	choices, err := llm.SyncReadStreamResponse(stream)
+	choices, err := llm.SyncReadStream(stream)
 	if err != nil {
 		t.Fatalf("Failed to sync wait stream response: %v", err)
 	}
@@ -226,14 +256,14 @@ func TestChatCompletionStreamWithToolsHandler(t *testing.T) {
 	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
 
 	wg := sync.WaitGroup{}
-	contentChCollection := llm.StreamResponseChunkHandler(
+	contentChCollection := llm.StreamResponseHandler(
 		t.Context(),
 		stream,
 		func(ctx context.Context, tc model.StreamChoiceDeltaToolCall) { // will be called in a new goroutine
 			fmt.Printf("Tool Call: %+v\n", tc)
 		})
-	contentCh := contentChCollection.ContentCh
-	toolCallCh := contentChCollection.ToolCallCh
+	contentCh := contentChCollection.Content
+	toolCallCh := contentChCollection.ToolCall
 
 	wg.Add(1)
 	fmt.Println("Model is thinking...")

@@ -65,7 +65,13 @@ type (
 	}
 )
 
-func initAgentModel(ctx context.Context, ag *agent.Agent, bus *channel.Bus, history []string, toolCallCh <-chan toolCallMsg) agentModel {
+func initAgentModel(
+	ctx context.Context,
+	ag *agent.Agent,
+	bus *channel.Bus,
+	history []string,
+	toolCallCh <-chan toolCallMsg,
+) agentModel {
 	ta := textarea.New()
 	ta.Placeholder = "What can I do for you?"
 	ta.Focus()
@@ -241,10 +247,7 @@ var (
 // The box has fixed dimensions - only the content inside changes
 func renderToolCallBox(name string, args string, width int) string {
 	// Box takes full width minus some margin
-	boxWidth := width - 4
-	if boxWidth < 20 {
-		boxWidth = 20
-	}
+	boxWidth := max(width - 4, 20)
 	// Inner content width = boxWidth - border(2) - padding(2)
 	innerWidth := boxWidth - 4
 
