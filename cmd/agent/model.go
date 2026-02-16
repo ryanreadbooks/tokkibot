@@ -33,14 +33,29 @@ var (
 	assistantStyleColor         = lipgloss.Color("#0f8b56")
 	assistantThinkingStyleColor = lipgloss.Color("#5e5e5e")
 
-	userStyle    = lipgloss.NewStyle().Foreground(userStyleColor).Bold(true).BorderLeft(true)
-	userMsgStyle = lipgloss.NewStyle().Foreground(userStyleColor).AlignHorizontal(lipgloss.Left)
+	userStyle = lipgloss.NewStyle().Foreground(
+		userStyleColor).
+		Bold(true).BorderLeft(true)
+	userMsgStyle = lipgloss.NewStyle().Foreground(
+		userStyleColor).AlignHorizontal(lipgloss.Left)
 
-	assistantStyle    = lipgloss.NewStyle().Foreground(assistantStyleColor).Bold(true).BorderLeft(true)
-	assistantMsgStyle = lipgloss.NewStyle().Foreground(assistantStyleColor).AlignHorizontal(lipgloss.Left)
+	assistantStyle = lipgloss.NewStyle().Foreground(
+		assistantStyleColor).Bold(true).BorderLeft(true)
+	assistantMsgStyle = lipgloss.NewStyle().Foreground(
+		assistantStyleColor).AlignHorizontal(lipgloss.Left)
 
-	assistantThinkingStyle    = lipgloss.NewStyle().Foreground(assistantThinkingStyleColor).Bold(true).BorderLeft(true)
-	assistantThinkingMsgStyle = lipgloss.NewStyle().Foreground(assistantThinkingStyleColor).AlignHorizontal(lipgloss.Left)
+	assistantThinkingStyle = lipgloss.NewStyle().Foreground(
+		assistantThinkingStyleColor).Bold(true).BorderLeft(true)
+	assistantThinkingMsgStyle = lipgloss.NewStyle().Foreground(
+		assistantThinkingStyleColor).AlignHorizontal(lipgloss.Left)
+
+	toolCallStyle = lipgloss.NewStyle().Foreground(
+		lipgloss.Color("#e6ca3d"),
+	).Italic(true).Bold(true)
+
+	toolCallArgsStyle = lipgloss.NewStyle().Foreground(
+		lipgloss.Color("#5e5e5e"),
+	)
 )
 
 type (
@@ -64,16 +79,25 @@ type (
 		// all msgs
 		msgs []uiMsg
 
-		width    int // terminal width
-		textarea textarea.Model
-		viewport viewport.Model
-		spinner  spinner.Model
-		err      error
+		width         int // terminal width
+		inputTextarea textarea.Model
+		msgViewport   viewport.Model
+
+		toolCallViewport   viewport.Model
+		toolCallingSpinner spinner.Model
+		curToolCall        toolCallMsg
+
+		err error
 	}
 
 	contentMsg struct {
 		content          string
 		reasoningContent string
+	}
+
+	toolCallMsg struct {
+		name      string
+		arguments string
 	}
 )
 
@@ -100,19 +124,21 @@ func initAgentModel(
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
 
 	vp := viewport.New(80, 20)
+	tcVp := viewport.New(80, 5)
 
 	return agentModel{
-		ctx:      ctx,
-		ag:       ag,
-		textarea: ta,
-		viewport: vp,
-		spinner:  sp,
-		msgs:     initMsgs,
+		ctx:                ctx,
+		ag:                 ag,
+		inputTextarea:      ta,
+		msgViewport:        vp,
+		toolCallViewport:   tcVp,
+		toolCallingSpinner: sp,
+		msgs:               initMsgs,
 	}
 }
 
 func (m agentModel) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink)
+	return tea.Batch(textarea.Blink, m.toolCallingSpinner.Tick)
 }
 
 func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -122,24 +148,28 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpCmd tea.Cmd
 	)
 
-	m.textarea, taCmd = m.textarea.Update(msg)
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	m.spinner, spCmd = m.spinner.Update(msg)
+	m.inputTextarea, taCmd = m.inputTextarea.Update(msg)
+	m.msgViewport, vpCmd = m.msgViewport.Update(msg)
+	m.toolCallingSpinner, spCmd = m.toolCallingSpinner.Update(msg)
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height - textAreaHeight*3
-		m.textarea.SetWidth(msg.Width)
-		m.updateViewport()
+		m.msgViewport.Width = msg.Width
+		if m.curToolCall.name != "" {
+			m.toolCallViewport.Height = 3
+			m.msgViewport.Height = msg.Height - textAreaHeight*3 - m.toolCallViewport.Height
+		} else {
+			m.msgViewport.Height = msg.Height - textAreaHeight*3
+		}
+		m.inputTextarea.SetWidth(msg.Width)
+		m.updateMsgViewport()
 
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyEnter:
-			userInput := m.textarea.Value()
+			userInput := m.inputTextarea.Value()
 			userInput = strings.TrimSpace(userInput)
 			if userInput == "" {
 				return m, tea.Batch(taCmd, spCmd)
@@ -158,8 +188,8 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content: userInput,
 			})
 			m.consumeChans(stream)
-			m.textarea.Reset()
-			m.updateViewport()
+			m.inputTextarea.Reset()
+			m.updateMsgViewport()
 
 			return m, tea.Batch(taCmd, vpCmd, spCmd)
 		}
@@ -178,10 +208,23 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		m.updateViewport()
+		m.updateMsgViewport()
 
 		// add to the last msg
 		return m, tea.Batch(taCmd, vpCmd, spCmd)
+
+	case toolCallMsg:
+		if msg.name == "" {
+			m.curToolCall = msg
+		} else {
+			newToolCall := toolCallMsg{
+				name:      msg.name,
+				arguments: m.curToolCall.arguments + msg.arguments,
+			}
+			m.curToolCall = newToolCall
+		}
+		m.updateMsgViewport()
+		m.toolCallViewport.GotoBottom()
 
 	case errMsg:
 		m.err = msg
@@ -227,17 +270,34 @@ func (m agentModel) renderUiMsgs() string {
 	return sb.String()
 }
 
-func (m *agentModel) updateViewport() {
+func (m *agentModel) updateMsgViewport() {
 	content := m.renderUiMsgs()
-	m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width).Render(content))
-	m.viewport.GotoBottom()
+	m.msgViewport.SetContent(lipgloss.NewStyle().Width(m.msgViewport.Width).Render(content))
+	m.msgViewport.GotoBottom()
+}
+
+func (m *agentModel) renderToolCall() string {
+	if m.curToolCall.name != "" {
+		return toolCallStyle.Render("Tool calling "+m.curToolCall.name+" ") +
+			m.toolCallingSpinner.View() + "\n" +
+			toolCallArgsStyle.Render(m.curToolCall.arguments) + "\n"
+	}
+
+	return ""
 }
 
 func (m agentModel) View() string {
-	return fmt.Sprintf("%s\n\n%s", m.viewport.View(), m.textarea.View())
+	if m.curToolCall.name != "" {
+		return fmt.Sprintf("%s\n\n%s%s",
+			m.msgViewport.View(),
+			m.renderToolCall(),
+			m.inputTextarea.View())
+	}
+
+	return fmt.Sprintf("%s\n\n%s", m.msgViewport.View(), m.inputTextarea.View())
 }
 
-func (m agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
+func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 	go func() {
 		for c := range stream.Content {
 			m.pg.Send(contentMsg{
@@ -247,7 +307,18 @@ func (m agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 		}
 	}()
 
-	giveupChannel(stream.ToolCall)
+	// tool calling
+	go func() {
+		for tc := range stream.ToolCall {
+			m.pg.Send(toolCallMsg{
+				name:      tc.Name,
+				arguments: tc.Arguments,
+			})
+		}
+
+		// before exit we need to dismiss tool call display
+		m.pg.Send(toolCallMsg{})
+	}()
 
 	return m
 }

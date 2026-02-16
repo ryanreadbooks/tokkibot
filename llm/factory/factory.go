@@ -13,17 +13,17 @@ const (
 	DefaultBaseURLEnv = "TOKKIBOT_LLM_BASE_URL"
 )
 
-type Compatibility string
+type Style string
 
 const (
-	CompatibilityOpenAI Compatibility = "openai"
+	StyleOpenAI Style = "openai"
 )
 
 func DefaultOption() option {
 	return option{
-		compatibility: CompatibilityOpenAI,
-		apiKey:        os.Getenv(DefaultAPIKeyEnv),
-		baseURL:       os.Getenv(DefaultBaseURLEnv),
+		style:   StyleOpenAI,
+		apiKey:  os.Getenv(DefaultAPIKeyEnv),
+		baseURL: os.Getenv(DefaultBaseURLEnv),
 	}
 }
 
@@ -31,7 +31,7 @@ type option struct {
 	apiKey  string
 	baseURL string
 
-	compatibility Compatibility
+	style Style
 }
 
 func (o *option) apply(opts ...Option) {
@@ -42,9 +42,9 @@ func (o *option) apply(opts ...Option) {
 
 type Option func(*option)
 
-func WithCompatibility(compatibility Compatibility) Option {
+func WithStyle(s Style) Option {
 	return func(o *option) {
-		o.compatibility = compatibility
+		o.style = s
 	}
 }
 
@@ -64,17 +64,17 @@ func NewLLM(opts ...Option) (llm.LLM, error) {
 	proOpt := DefaultOption()
 	proOpt.apply(opts...)
 
-	if proOpt.compatibility == "" {
-		return nil, fmt.Errorf("compatibility is required")
+	if proOpt.style == "" {
+		return nil, fmt.Errorf("style is required")
 	}
 
-	switch proOpt.compatibility {
-	case CompatibilityOpenAI:
+	switch proOpt.style {
+	case StyleOpenAI:
 		return openai.New(openai.Config{
 			ApiKey:  proOpt.apiKey,
 			BaseURL: proOpt.baseURL,
 		})
 	default:
-		return nil, fmt.Errorf("unsupported compatibility: %s", proOpt.compatibility)
+		return nil, fmt.Errorf("unsupported style: %s", proOpt.style)
 	}
 }

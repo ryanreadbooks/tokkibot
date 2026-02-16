@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/ryanreadbooks/tokkibot/pkg/schema"
 )
@@ -21,4 +22,15 @@ type Invoker interface {
 	//
 	// The arguments is the JSON-encoded string of the arguments.
 	Invoke(ctx context.Context, arguments string) (string, error)
+}
+
+type InvokeResult struct {
+	Success bool   `json:"success"`
+	Data    string `json:"data,omitempty"`
+	Err     string `json:"err,omitempty"`
+}
+
+func (r *InvokeResult) Json() string {
+	o, _ := json.Marshal(r)
+	return string(o)
 }

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -32,7 +33,9 @@ func resolvePath(path string, allowDirs []string) (string, error) {
 }
 
 type ReadFileInput struct {
-	Path string `json:"path" jsonschema:"description=The path to the file to read from"`
+	Path   string `json:"path"             jsonschema:"description=The path to the file to read from"`
+	Offset int    `json:"offset,omitempty" jsonschema:"description=Starting line number (1-indexed). Use for large files to read from specific line"`
+	Limit  int    `json:"limit,omitempty"  jsonschema:"description=Number of lines to read. Use with offset for large files to read in chunks"`
 }
 
 // Tool to read a file contents.
@@ -40,8 +43,10 @@ type ReadFileInput struct {
 // We restrict the directory to read from to avoid security issues.
 func ReadFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "read_file",
-		Description: "Read the contents of a file at the given path.",
+		Name: "read_file",
+		Description: "Read the contents of a file at the given path. Output always always include numbers " +
+			"in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content " +
+			"by specifying line offset and limit for large files. ",
 	}, func(ctx context.Context, input *ReadFileInput) (content string, err error) {
 		// now we can read the file
 		cleanPath, err := resolvePath(input.Path, allowDirs)
@@ -49,12 +54,39 @@ func ReadFile(allowDirs []string) tool.Invoker {
 			return "", err
 		}
 
-		fileContent, err := os.ReadFile(cleanPath)
+		f, err := os.Open(cleanPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read file %s: %w", cleanPath, err)
+			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)
 		}
 
-		return string(fileContent), nil
+		scanner := bufio.NewScanner(f)
+		lines := []string{}
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines = append(lines, line)
+		}
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+
+		start := 0
+		if input.Offset != 0 {
+			start = input.Offset - 1
+		}
+		start = max(start, 0)
+		end := len(lines)
+		if input.Limit != 0 {
+			end = start + input.Limit
+		}
+		end = min(end, len(lines))
+
+		selected := lines[start:end]
+		numberedLines := []string{}
+		for i := range selected {
+			numberedLines = append(numberedLines, fmt.Sprintf("%d|%s", start+i+1, strings.TrimRight(selected[i], "\n")))
+		}
+
+		return strings.Join(numberedLines, "\n"), nil
 	})
 }
 

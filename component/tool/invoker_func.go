@@ -16,7 +16,6 @@ type invoker[T, O any] struct {
 
 	// for future use maybe
 	customArgumentUnMarshaler ArgumentUnMarshaler
-	customOutputMarshaler     OutputMarshaler
 }
 
 func (t *invoker[T, O]) Info() Info {
@@ -50,24 +49,24 @@ func (t *invoker[T, O]) Invoke(ctx context.Context, arguments string) (string, e
 		return "", fmt.Errorf("tool arguments unmarshal json failed, tool_name=%s, error=%w", t.info.Name, err)
 	}
 
+	invr := &InvokeResult{Success: true}
 	// invoke the function
-	output, err := t.fn(ctx, input)
-	if err != nil {
-		return "", fmt.Errorf("tool invoke failed, tool_name=%s, error=%w", t.info.Name, err)
+	output, errOutput := t.fn(ctx, input)
+	if errOutput != nil {
+		invr.Success = false
+		invr.Err = fmt.Errorf("tool %s invoke err: %w", t.info.Name, errOutput).Error()
+		return invr.Json(), nil
 	}
 
-	var result string
-	if t.customOutputMarshaler != nil {
-		result, err = t.customOutputMarshaler(ctx, output)
-	} else {
-		// json marshal the output
-		result, err = defaultOutputMarshal(output)
-	}
-	if err != nil {
-		return "", fmt.Errorf("tool output marshal failed, tool_name=%s, error=%w", t.info.Name, err)
+	// json marshal the output
+	result, errMarshal := defaultOutputMarshal(output)
+	if errMarshal != nil {
+		invr.Err = fmt.Errorf("tool %s success but output marshal err: %w", t.info.Name, errMarshal).Error()
 	}
 
-	return result, nil
+	invr.Data = result
+
+	return invr.Json(), nil
 }
 
 // Heler function to create an InvokableTool from a function.

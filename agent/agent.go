@@ -21,6 +21,9 @@ import (
 
 const (
 	maxIterAllowed = 30
+
+	modelTemperature = 1.0
+	maxTokenAllowed  = 25000
 )
 
 type AgentConfig struct {
@@ -256,7 +259,8 @@ func (a *Agent) handleIncomingMessageStream(
 		llmReq := a.buildLLMMessageRequest(inMsg)
 		// call llm the stream way
 		llmRespCh := a.llm.ChatCompletionStream(ctx, llmReq)
-		streamPacked := llm.StreamResponseHandler(ctx, llmRespCh, a.handleStreamingToolCall(&dstTcs))
+		streamPacked := llm.StreamResponseHandler(ctx,
+			llmRespCh, a.handleStreamingToolCall(&dstTcs))
 
 		wg.Go(func() {
 			for content := range streamPacked.Content {
@@ -329,21 +333,22 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, tc *llmmodel.CompletionToo
 		return fmt.Sprintf("(tool %s not found)", tc.Function.Name)
 	}
 
+	a.toolsMu.RUnlock()
+
 	// execute tool
 	toolResult, err := tool.Invoke(ctx, tc.Function.Arguments)
 	if err != nil {
 		toolResult = err.Error()
 	}
 
-	a.toolsMu.RUnlock()
 	return toolResult
 }
 
 func (a *Agent) buildLLMMessageRequest(inMsg *chmodel.IncomingMessage) *llm.Request {
 	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId)
 	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
-	r.Temperature = 1
-	r.MaxTokens = 16384
+	r.Temperature = modelTemperature
+	r.MaxTokens = maxTokenAllowed
 	r.Thinking = llmmodel.EnableThinking()
 	r.Tools = a.buildLLMToolParams()
 

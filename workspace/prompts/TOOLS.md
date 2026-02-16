@@ -2,17 +2,36 @@
 
 You have access to the following tools to help accomplish tasks.
 
-## read_file
+Tool calls have universial output json format:
 
-Read the contents of a file at the given path.
+- `success` (required): Indicating whether tool call succeeded.
+- `data`: Tool call output data.
+- `err`: Tool call error message, empty if tool call is successful.
+**Example**:
 
-**Parameters:**
-- `path` (required): The path to the file to read from
-
-**Example:**
 ```json
 {
-  "path": "/path/to/file.txt"
+	"success": true,
+	"data": "tool call output, can be empty",
+	"err": "tool call error message, may be empty."
+}
+```
+
+## read_file
+
+Read the contents of a file at the given path. Output always include numbers in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content by specifying line offset and limit for large files.
+
+**Parameters:**
+
+- `path` (required): The path to the file to read from
+- `offset` (optional): Starting line number (1-indexed). Use for large files to read from specific line
+- `limit`: (optional): Number of lines to read. Use with offset for large files to read in chunks
+
+**Example:**
+
+```json
+{
+	"path": "/path/to/file.txt"
 }
 ```
 
@@ -21,14 +40,16 @@ Read the contents of a file at the given path.
 Write content to a file at the given path. Creates parent directories if necessary.
 
 **Parameters:**
+
 - `path` (required): The path to the file to write to
 - `content` (required): The content to write to the file
 
 **Example:**
+
 ```json
 {
-  "path": "/path/to/file.txt",
-  "content": "Hello, World!"
+	"path": "/path/to/file.txt",
+	"content": "Hello, World!"
 }
 ```
 
@@ -37,16 +58,19 @@ Write content to a file at the given path. Creates parent directories if necessa
 List the contents of a directory.
 
 **Parameters:**
+
 - `path` (required): The path to the directory to list
 
 **Example:**
+
 ```json
 {
-  "path": "/path/to/directory"
+	"path": "/path/to/directory"
 }
 ```
 
 **Output format:**
+
 - 📁 prefix indicates a directory
 - 📄 prefix indicates a file
 
@@ -55,17 +79,19 @@ List the contents of a directory.
 Edit the content of a file at given path by replacing the specific string in the file.
 
 **Parameters:**
+
 - `file_name` (required): The file to be edited.
 - `new_string` (required): The new string to replace the old string with.
 - `old_string` (required): The old string to replace
 - `replace_all` (optional): Replace all old_string with new_string.
 
 **Example:**
+
 ```json
 {
-  "file_name": "/path/to/file",
-  "new_string": "Hello world",
-  "old_string": "Good morning"
+	"file_name": "/path/to/file",
+	"new_string": "Hello world",
+	"old_string": "Good morning"
 }
 ```
 
@@ -74,18 +100,21 @@ Edit the content of a file at given path by replacing the specific string in the
 Execute a shell command under the optional given working directory.
 
 **Parameters:**
+
 - `command` (required): The command to execute along with its arguments
 - `working_dir` (optional): The working directory to execute the command in, current working directory will be used if not provided
 
 **Example:**
+
 ```json
 {
-  "command": "ls -la",
-  "working_dir": "/home/user/project"
+	"command": "ls -la",
+	"working_dir": "/home/user/project"
 }
 ```
 
 **Notes:**
+
 - Dangerous commands are blocked for safety (e.g., `rm -rf`, `shutdown`)
 - On error, output is wrapped in `<shell_blocked>` (command rejected) or `<shell_run_error>` (execution failed) tags
 - Output longer than 15000 characters will be truncated
@@ -96,6 +125,7 @@ Execute a shell command under the optional given working directory.
 Use a skill by name and perform an action on it. Skills extend your capabilities with domain-specific knowledge, resources, or scripts.
 
 **Parameters:**
+
 - `name` (required): The name of the skill to use
 - `action` (required): The action to perform, one of:
   - `activate` - Load the full skill content from SKILL.md
@@ -106,21 +136,25 @@ Use a skill by name and perform an action on it. Skills extend your capabilities
 **Examples:**
 
 Activate a skill:
+
 ```json
-{"name": "name_of_skill", "action": "activate"}
+{ "name": "name_of_skill", "action": "activate" }
 ```
 
 Load specific resources:
+
 ```json
-{"name": "name_of_skill", "action": "load", "args": "references/deployment.md,assets/dockerfile"}
+{ "name": "name_of_skill", "action": "load", "args": "references/deployment.md,assets/dockerfile" }
 ```
 
 Execute a skill script:
+
 ```json
-{"name": "name_of_skill", "action": "script", "args": "python analyze.py --target src/"}
+{ "name": "name_of_skill", "action": "script", "args": "python analyze.py --target src/" }
 ```
 
 **Notes:**
+
 - Skills are loaded from system workspace (`~/.tokkibot/skills/`) or project directory (`.tokkibot/skills/`)
 - Project skills take precedence over system skills with the same name
 - Use `activate` first to understand what a skill offers before using other actions
