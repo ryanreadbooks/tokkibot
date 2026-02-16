@@ -70,21 +70,27 @@ func NewUserMessageParam[T string | []*ContentUnionParam](msg T) MessageParam {
 }
 
 type AssistantMessageParam struct {
-	String    *StringParam
-	Texts     []*TextParam
-	ToolCalls []*ToolCallParam
+	Content          *StringParam
+	Texts            []*TextParam
+	ToolCalls        []*ToolCallParam
+	ReasoningContent *StringParam
 }
 
-func NewAssistantMessageParam[T string | []*TextParam](msg T, toolCalls []*ToolCallParam) MessageParam {
+func NewAssistantMessageParam[T string | []*TextParam](
+	msg T,
+	toolCalls []*ToolCallParam,
+	reasoningContent *StringParam,
+) MessageParam {
 	assistant := AssistantMessageParam{}
 	switch v := any(msg).(type) {
 	case string:
-		assistant.String = &StringParam{Value: v}
+		assistant.Content = &StringParam{Value: v}
 	case []*TextParam:
 		assistant.Texts = v
 	}
 
 	assistant.ToolCalls = toolCalls
+	assistant.ReasoningContent = reasoningContent
 
 	return MessageParam{
 		AssistantMessageParam: &assistant,

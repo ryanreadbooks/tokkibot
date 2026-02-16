@@ -55,22 +55,10 @@ type Agent struct {
 
 	// incoming/outgoing channel bus
 	bus *channel.Bus
-
-	toolCallingSubscribers []func(string, string, ThinkingState)
-	reasoningSubscribers   []func(string)
-}
-
-func (a *Agent) SubscribeToolCalling(fn func(name, argFragment string, state ThinkingState)) {
-	a.toolCallingSubscribers = append(a.toolCallingSubscribers, fn)
-}
-
-func (a *Agent) SubscribeReasoning(fn func(string)) {
-	a.reasoningSubscribers = append(a.reasoningSubscribers, fn)
 }
 
 func NewAgent(
 	llm llm.LLM,
-	bus *channel.Bus,
 	c AgentConfig,
 ) *Agent {
 	sessionManager := NewSessionManager(c.RootCtx, SessionManagerConfig{
@@ -107,7 +95,6 @@ func NewAgent(
 		skillLoader: skillLoader,
 
 		llm: llm,
-		bus: bus,
 	}
 
 	agent.registerTools()
@@ -141,98 +128,33 @@ func (a *Agent) RegisterTool(tool tool.Invoker) {
 	}
 }
 
-func (a *Agent) Run(ctx context.Context) error {
-	if len(a.bus.IncomingChannels()) == 0 {
-		slog.Warn("[agent] no input channels registered, will not start listening")
-		return nil
-	}
-
-	for _, channel := range a.bus.IncomingChannels() {
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					slog.Error("[agent] loop panic", "error", err)
-				}
-			}()
-
-			a.loop(ctx, channel)
-		}()
-	}
-
-	return nil
+func (a *Agent) Ask(ctx context.Context, msg *chmodel.IncomingMessage) string {
+	return a.handleIncomingMessage(ctx, msg)
 }
 
-func (a *Agent) RunStream(ctx context.Context) error {
-	if len(a.bus.IncomingChannels()) == 0 {
-		slog.Warn("[agent] no input channels registered, will not start listening")
-		return nil
-	}
-
-	for _, channel := range a.bus.IncomingChannels() {
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					slog.Error("[agent] loop panic", "error", err)
-				}
-			}()
-
-			// get channel corresponding outgoing channel
-			a.loopStream(ctx, channel, a.bus.GetOutgoingChannel(channel.Type()))
-		}()
-	}
-
-	return nil
+type AskStreamResultToolCall struct {
+	Name      string
+	Arguments string
 }
 
-func (a *Agent) loop(ctx context.Context, channel channel.IncomingChannel) error {
-	for {
-		select {
-		case <-ctx.Done():
-			switch err := ctx.Err(); err {
-			case context.Canceled:
-				slog.Info("[agent] exited")
-				return nil
-			default:
-				slog.Warn("[agent] exited", "error", err)
-				return err
-			}
-		case inMsg, ok := <-channel.Wait(ctx):
-			if !ok {
-				// channel is closed
-				slog.Info("[agent] channel closed", "channel", channel.Type())
-			} else {
-				answer := a.handleIncomingMessage(ctx, &inMsg)
-				a.sendOutgoingMessage(ctx, inMsg.Channel, inMsg.ChatId, answer)
-			}
-		}
-	}
+type AskStreamResultContent struct {
+	Content          string
+	ReasoningContent string
 }
 
-func (a *Agent) loopStream(
-	ctx context.Context,
-	inChan channel.IncomingChannel,
-	outChan channel.OutgoingChannel,
-) error {
-	for {
-		select {
-		case <-ctx.Done():
-			switch err := ctx.Err(); err {
-			case context.Canceled:
-				slog.Info("[agent] exited")
-				return nil
-			default:
-				slog.Warn("[agent] exited", "error", err)
-				return err
-			}
-		case inMsg, ok := <-inChan.Wait(ctx):
-			if !ok {
-				// channel is closed
-				slog.Info("[agent] channel closed", "channel", inChan.Type())
-			} else {
-				a.handleIncomingMessageStream(ctx, &inMsg, outChan)
-			}
-		}
+type AskStreamResult struct {
+	Content  chan *AskStreamResultContent
+	ToolCall chan *AskStreamResultToolCall
+}
+
+func (a *Agent) AskStream(ctx context.Context, msg *chmodel.IncomingMessage) *AskStreamResult {
+	res := AskStreamResult{
+		Content:  make(chan *AskStreamResultContent),
+		ToolCall: make(chan *AskStreamResultToolCall),
 	}
+	go a.handleIncomingMessageStream(ctx, msg, &res)
+
+	return &res
 }
 
 func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *chmodel.IncomingMessage) string {
@@ -250,8 +172,6 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *chmodel.Incomi
 		// call llm
 		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
 		if err != nil {
-			// slog.Warn("[agent] failed to call llm", "error", err, "channel", inMsg.Channel)
-			// early return
 			return fmt.Sprintf("(failed to call llm: %s)", err.Error())
 		}
 		lastResponse = llmResp
@@ -318,58 +238,50 @@ func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) llm.Stream
 func (a *Agent) handleIncomingMessageStream(
 	ctx context.Context,
 	inMsg *chmodel.IncomingMessage,
-	outChan channel.OutgoingChannel,
+	result *AskStreamResult,
 ) {
 	curIter := 0
 	a.contextMgr.AppendUserMessage(inMsg)
 
 	for curIter <= maxIterAllowed {
-		curIter++
-
-		llmReq := a.buildLLMMessageRequest(inMsg)
-
 		var (
-			wg             sync.WaitGroup
-			contentBuilder strings.Builder
+			wg                      sync.WaitGroup
+			contentBuilder          strings.Builder
+			reasoningContentBuilder strings.Builder
 			// we also need to accumulate tool calls from assistant to feed back to llm
 			dstTcs = make([]*toolCallAndResult, 0)
 		)
+
+		curIter++
+		llmReq := a.buildLLMMessageRequest(inMsg)
 		// call llm the stream way
 		llmRespCh := a.llm.ChatCompletionStream(ctx, llmReq)
-		chanCollection := llm.StreamResponseHandler(ctx, llmRespCh, a.handleStreamingToolCall(&dstTcs))
+		streamPacked := llm.StreamResponseHandler(ctx, llmRespCh, a.handleStreamingToolCall(&dstTcs))
 
 		wg.Go(func() {
-			for content := range chanCollection.Content {
-				err := outChan.Send(ctx, chmodel.OutgoingMessage{
-					Ctrl:    chmodel.CtrlMsg,
-					Channel: inMsg.Channel,
-					ChatId:  inMsg.ChatId,
-					Content: content.Content,
-					Created: time.Now().Unix(),
-				})
-				if err != nil {
-					return
+			for content := range streamPacked.Content {
+				result.Content <- &AskStreamResultContent{
+					Content:          content.Content,
+					ReasoningContent: content.ReasoningContent,
 				}
 				contentBuilder.WriteString(content.Content)
+				reasoningContentBuilder.WriteString(content.ReasoningContent)
 			}
 		})
 
 		wg.Go(func() {
-			for toolCall := range chanCollection.ToolCall {
-				for _, fn := range a.toolCallingSubscribers {
-					fn(toolCall.Name, toolCall.ArgumentFragment, ThinkingStateThinking)
+			for toolCall := range streamPacked.ToolCall {
+				select {
+				case result.ToolCall <- &AskStreamResultToolCall{
+					Name:      toolCall.Name,
+					Arguments: toolCall.ArgumentFragment,
+				}:
+				default:
 				}
 			}
 		})
 
 		wg.Wait()
-
-		// Clear tool call display after this iteration's tools are done
-		if len(dstTcs) > 0 {
-			for _, fn := range a.toolCallingSubscribers {
-				fn("", "", ThinkingStateDone)
-			}
-		}
 
 		assistantTcs := make([]llmmodel.CompletionToolCall, 0, len(dstTcs))
 		for _, tcr := range dstTcs {
@@ -378,8 +290,9 @@ func (a *Agent) handleIncomingMessageStream(
 
 		// accumulate assistant message for this iteration
 		a.contextMgr.AppendAssistantMessage(inMsg, &llmmodel.CompletionMessage{
-			Content:   contentBuilder.String(),
-			ToolCalls: assistantTcs,
+			Content:          contentBuilder.String(),
+			ToolCalls:        assistantTcs,
+			ReasoningContent: reasoningContentBuilder.String(),
 		})
 
 		if len(dstTcs) == 0 {
@@ -393,27 +306,9 @@ func (a *Agent) handleIncomingMessageStream(
 		}
 	}
 
-	// Send stop signal to indicate stream completion
-	outChan.Send(ctx, chmodel.OutgoingMessage{
-		Channel: inMsg.Channel,
-		ChatId:  inMsg.ChatId,
-		Ctrl:    chmodel.CtrlStop,
-		Created: time.Now().Unix(),
-	})
-}
-
-func (a *Agent) sendOutgoingMessage(ctx context.Context,
-	chanType chmodel.Type, chatId string, content string,
-) {
-	if outCh := a.bus.GetOutgoingChannel(chanType); outCh != nil {
-		outCh.Send(ctx, chmodel.OutgoingMessage{
-			Ctrl:    chmodel.CtrlMsg,
-			Channel: chanType,
-			ChatId:  chatId,
-			Content: content,
-			Created: time.Now().Unix(),
-		})
-	}
+	// close all
+	close(result.ToolCall)
+	close(result.Content)
 }
 
 func (a *Agent) handleToolCall(
@@ -447,6 +342,9 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, tc *llmmodel.CompletionToo
 func (a *Agent) buildLLMMessageRequest(inMsg *chmodel.IncomingMessage) *llm.Request {
 	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId)
 	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
+	r.Temperature = 1
+	r.MaxTokens = 16384
+	r.Thinking = llmmodel.EnableThinking()
 	r.Tools = a.buildLLMToolParams()
 
 	return r

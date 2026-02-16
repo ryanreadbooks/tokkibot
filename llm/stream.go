@@ -87,8 +87,9 @@ type streamToolCallBuffer struct {
 type StreamToolCallHandler func(ctx context.Context, tc model.StreamChoiceDeltaToolCall)
 
 type StreamContentFragment struct {
-	Content      string
-	FinishReason model.FinishReason
+	Content          string
+	ReasoningContent string
+	FinishReason     model.FinishReason
 }
 
 type StreamToolCallFragment struct {
@@ -101,7 +102,10 @@ type StreamResponsePack struct {
 	ToolCall <-chan *StreamToolCallFragment
 }
 
-func onStreamToolCallAccumulated(ctx context.Context, handler StreamToolCallHandler) func(tcbs []*streamToolCallBuffer) {
+func onStreamToolCallAccumulated(
+	ctx context.Context,
+	handler StreamToolCallHandler,
+) func(tcbs []*streamToolCallBuffer) {
 	return func(tcbs []*streamToolCallBuffer) {
 		for _, tc := range tcbs {
 			handler(ctx, model.StreamChoiceDeltaToolCall{
@@ -121,7 +125,7 @@ func onStreamToolCallAccumulated(ctx context.Context, handler StreamToolCallHand
 //
 // handler will be called in an other goroutine, so you don't need to open another goroutine for it.
 func StreamResponseHandler(ctx context.Context,
-	ch <-chan *StreamResponseChunk,
+	chunkCh <-chan *StreamResponseChunk,
 	handler StreamToolCallHandler,
 ) *StreamResponsePack {
 	contentCh := make(chan *StreamContentFragment, 256) // try avoid blocking
@@ -129,7 +133,9 @@ func StreamResponseHandler(ctx context.Context,
 
 	// when this goroutine finished, tool are already called, and content channel is closed.
 	safe.Go(func() {
-		readStreamResponseChunk(ctx, ch, contentCh, toolCallCh, onStreamToolCallAccumulated(ctx, handler))
+		readStreamResponseChunk(ctx,
+			chunkCh, contentCh, toolCallCh,
+			onStreamToolCallAccumulated(ctx, handler))
 	})
 
 	return &StreamResponsePack{
@@ -141,29 +147,20 @@ func StreamResponseHandler(ctx context.Context,
 func readStreamResponseChunk(
 	ctx context.Context,
 	ch <-chan *StreamResponseChunk,
-	contentCh chan<- *StreamContentFragment, // make sure it is closed when returned
-	toolCallCh chan<- *StreamToolCallFragment, // make sure it is closed when returned
+	contentCh chan<- *StreamContentFragment,
+	toolCallCh chan<- *StreamToolCallFragment,
 	onToolAccumulated func(tcbs []*streamToolCallBuffer),
 ) {
 	var (
-		contentCloseOnce  sync.Once
-		toolCallCloseOnce sync.Once
-		tcBuffers         = make(map[int64]*streamToolCallBuffer)
+		tcBuffers       = make(map[int64]*streamToolCallBuffer)
+		closeContentCh  = closeOnce(contentCh)
+		closeToolCallCh = closeOnce(toolCallCh)
 	)
 
-	closeContent := func() {
-		contentCloseOnce.Do(func() {
-			close(contentCh)
-		})
-	}
-	closeToolCall := func() {
-		toolCallCloseOnce.Do(func() {
-			close(toolCallCh)
-		})
-	}
-
-	defer closeContent()
-	defer closeToolCall()
+	defer func() {
+		closeContentCh()
+		closeToolCallCh()
+	}()
 
 	for chunk := range ch {
 		if chunk.Err != nil {
@@ -181,11 +178,12 @@ func readStreamResponseChunk(
 			break
 		}
 
-		if delta.Content != "" {
+		if delta.Content != "" || delta.ReasoningContent != "" {
 			select {
 			case contentCh <- &StreamContentFragment{
-				Content:      delta.Content,
-				FinishReason: curChoice.FinishReason,
+				Content:          delta.Content,
+				ReasoningContent: delta.ReasoningContent,
+				FinishReason:     curChoice.FinishReason,
 			}:
 			case <-ctx.Done():
 				return
@@ -203,7 +201,7 @@ func readStreamResponseChunk(
 						ArgumentFragment: tc.Function.Arguments,
 					}:
 					case <-ctx.Done():
-					default: // discard when full
+						return
 					}
 				} else {
 					var sb strings.Builder
@@ -223,7 +221,7 @@ func readStreamResponseChunk(
 						ArgumentFragment: tc.Function.Arguments,
 					}:
 					case <-ctx.Done():
-					default: // discard when full
+						return
 					}
 				}
 			}
@@ -244,5 +242,14 @@ func readStreamResponseChunk(
 			})
 			onToolAccumulated(sortedTcs)
 		}
+	}
+}
+
+func closeOnce[T any](ch chan<- T) func() {
+	once := sync.Once{}
+	return func() {
+		once.Do(func() {
+			close(ch)
+		})
 	}
 }

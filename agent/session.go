@@ -26,10 +26,11 @@ func getSessionKey(channel channelmodel.Type, chatId string) string {
 }
 
 type SessionMessage struct {
-	Role    llmmodel.Role  `json:"role"`
-	Content string         `json:"content"`
-	Created int64          `json:"created"`
-	Extras  map[string]any `json:"extras,omitempty"` // extras message
+	Role             llmmodel.Role  `json:"role"`
+	Content          string         `json:"content"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	Created          int64          `json:"created"`
+	Extras           map[string]any `json:"extras,omitempty"` // extras message
 }
 
 func (s *SessionMessage) IsFromUser() bool {
@@ -95,12 +96,6 @@ func (s *Session) retrieve(dir string) ([]SessionMessage, error) {
 	return historyList, nil
 }
 
-func (s *Session) clear() {
-	s.msgMu.Lock()
-	defer s.msgMu.Unlock()
-	s.incrMsgList = s.incrMsgList[:0]
-}
-
 func (s *Session) save(dir string) error {
 	// append to the session file
 	path := filepath.Join(dir, getSessionFileName(s.sessionId))
@@ -148,14 +143,19 @@ func (s *Session) addUserMessage(msg string) {
 	})
 }
 
-func (s *Session) addAssistantMessage(msg string, toolCalls []llmmodel.CompletionToolCall) {
+func (s *Session) addAssistantMessage(
+	content string,
+	toolCalls []llmmodel.CompletionToolCall,
+	reasoningContent string,
+) {
 	s.msgMu.Lock()
 	defer s.msgMu.Unlock()
 
 	s.incrMsgList = append(s.incrMsgList, SessionMessage{
-		Role:    llmmodel.RoleAssistant,
-		Content: msg,
-		Created: time.Now().Unix(),
+		Role:             llmmodel.RoleAssistant,
+		Content:          content,
+		ReasoningContent: reasoningContent,
+		Created:          time.Now().Unix(),
 		Extras: map[string]any{
 			"tool_calls": toolCalls,
 		},

@@ -112,8 +112,8 @@ func toUserMessageParamUnion(param *model.UserMessageParam) *openai.ChatCompleti
 func toAssistantMessageParamUnion(param *model.AssistantMessageParam) *openai.ChatCompletionAssistantMessageParam {
 	if param != nil {
 		union := &openai.ChatCompletionAssistantMessageParam{}
-		if param.String != nil {
-			union.Content.OfString = openaiparam.NewOpt(param.String.Value)
+		if param.Content != nil {
+			union.Content.OfString = openaiparam.NewOpt(param.Content.Value)
 		}
 		for _, text := range param.Texts {
 			if text != nil {
@@ -207,6 +207,7 @@ func toChatCompletionNewParams(req *llm.Request) (openai.ChatCompletionNewParams
 			IncludeUsage: openaiparam.NewOpt(true),
 		},
 	}
+
 	if req.Temperature != -1 {
 		params.Temperature = openaiparam.NewOpt(req.Temperature)
 	}
@@ -214,15 +215,22 @@ func toChatCompletionNewParams(req *llm.Request) (openai.ChatCompletionNewParams
 		params.MaxTokens = openaiparam.NewOpt(req.MaxTokens)
 	}
 
-	for _, message := range req.Messages {
+	opts := []option.RequestOption{}
+
+	// attach reasoning content if necessary in request body in json format
+	// cuz this openai-sdk does not support setting reasoning_content in assistant message param
+	for idx, message := range req.Messages {
 		params.Messages = append(params.Messages, toChatCompletionMessageParamUnion(&message))
+		if message.AssistantMessageParam != nil && message.AssistantMessageParam.ReasoningContent != nil {
+			jsonKey := fmt.Sprintf("messages.%d.reasoning_content", idx)
+			opts = append(opts, option.WithJSONSet(jsonKey, message.AssistantMessageParam.ReasoningContent.Value))
+		}
 	}
 
 	for _, tool := range req.Tools {
 		params.Tools = append(params.Tools, toToolParamUnion(&tool))
 	}
 
-	opts := []option.RequestOption{}
 	if req.Thinking != nil {
 		opts = append(opts, option.WithJSONSet("thinking", req.Thinking))
 	}

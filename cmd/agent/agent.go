@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ryanreadbooks/tokkibot/agent"
+	tea "github.com/charmbracelet/bubbletea"
 	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +71,7 @@ func init() {
 }
 
 func runAgentOnce(ctx context.Context, message string) error {
-	ag, bus, err := prepareAgent(ctx)
+	ag, err := prepareAgent(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -82,58 +81,22 @@ func runAgentOnce(ctx context.Context, message string) error {
 		return err
 	}
 
-	ag.Run(ctx) // run in background
-
-	answerChan := make(chan string)
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case msg := <-bus.GetOutgoingChannel(channelmodel.ChannelCLI).Wait(ctx):
-			answerChan <- msg.Content
-		}
-	}()
-
-	err = bus.GetIncomingChannel(channelmodel.ChannelCLI).Send(ctx, channelmodel.IncomingMessage{
+	answer := ag.Ask(ctx, &channelmodel.IncomingMessage{
 		Channel: channelmodel.ChannelCLI,
 		ChatId:  "one-time",
 		Created: time.Now().Unix(),
 		Content: message,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to send message to agent: %w", err)
-	}
 
-	answer := <-answerChan
-	fmt.Println("Agent: ", answer)
+	fmt.Println("Assistant: ", answer)
 
 	return nil
 }
 
 func runAgent(ctx context.Context, args []string) error {
-	ag, bus, err := prepareAgent(ctx)
+	ag, err := prepareAgent(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
-	}
-
-	// Create channel for tool call notifications to UI
-	toolCallCh := make(chan toolCallMsg, 64)
-	ag.SubscribeToolCalling(func(name, argFragment string, state agent.ThinkingState) {
-		select {
-		case toolCallCh <- toolCallMsg{
-			Name:        name,
-			ArgFragment: argFragment,
-			Done:        state == agent.ThinkingStateDone,
-		}:
-		default:
-			// discard if channel full
-		}
-	})
-
-	err = ag.RunStream(ctx) // run in background with streaming
-	if err != nil {
-		return fmt.Errorf("failed to run agent with streaming: %w", err)
 	}
 
 	history, err := restoreHistory(ag)
@@ -141,21 +104,22 @@ func runAgent(ctx context.Context, args []string) error {
 		return err
 	}
 
-	fmt.Println("session: ", agentChatId)
+	fmt.Println("Session: ", agentChatId)
 
-	p := tea.NewProgram(
-		initAgentModel(ctx, ag, bus, history, toolCallCh),
-		tea.WithAltScreen(), // Use alternate screen buffer, clears on exit
-	)
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("failed to run agent: %w", err)
+	mod := initAgentModel(ctx, ag, history)
+	pg := tea.NewProgram(&mod)
+	mod.setPg(pg)
+	if _, err := pg.Run(); err != nil {
+		return err
 	}
+
+	fmt.Printf("\nSee you, use %s to resume conversation\n", agentChatId)
 
 	return nil
 }
 
 func runAgentListSkills(ctx context.Context) error {
-	ag, _, err := prepareAgent(ctx)
+	ag, err := prepareAgent(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -176,7 +140,7 @@ func runAgentListSkills(ctx context.Context) error {
 }
 
 func runAgentSystemPrompt(ctx context.Context) error {
-	ag, _, err := prepareAgent(ctx)
+	ag, err := prepareAgent(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}

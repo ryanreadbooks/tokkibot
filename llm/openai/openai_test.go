@@ -129,9 +129,9 @@ func TestChatCompletion(t *testing.T) {
 		resp, err := testOpenAi.ChatCompletion(ctx, &llm.Request{
 			Model:       defaultModel,
 			Messages:    messages,
-			Temperature: 0.6,
+			Temperature: 1.0,
 			Tools:       tools,
-			Thinking:    model.DisableThinking(),
+			Thinking:    model.EnableThinking(),
 		})
 		if err != nil {
 			t.Fatalf("Failed to chat completion: %v", err)
@@ -144,11 +144,18 @@ func TestChatCompletion(t *testing.T) {
 		choice := resp.Choices[0]
 		fmt.Printf("Round %d:\n", round+1)
 		fmt.Printf("Content: %s\n", choice.Message.Content)
+		fmt.Printf("Reasoning: %s\n", choice.Message.ReasoningContent)
 
 		if choice.Message.HasToolCalls() {
 			fmt.Println("Tool Calls:")
+			var reasoningContent *model.StringParam
+			if choice.Message.ReasoningContent != "" {
+				reasoningContent = &model.StringParam{Value: choice.Message.ReasoningContent}
+			}
 			messages = append(messages,
-				model.NewAssistantMessageParam(choice.Message.Content, choice.Message.GetToolCallParams()))
+				model.NewAssistantMessageParam(
+					choice.Message.Content,
+					choice.Message.GetToolCallParams(), reasoningContent))
 
 			for _, toolCall := range choice.Message.ToolCalls {
 				fmt.Println(toolCall.Id)

@@ -6,8 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
-	"github.com/ryanreadbooks/tokkibot/channel"
-	"github.com/ryanreadbooks/tokkibot/channel/cli"
 	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm/factory"
@@ -15,7 +13,6 @@ import (
 
 func prepareAgent(ctx context.Context) (
 	ag *agent.Agent,
-	bus *channel.Bus,
 	err error,
 ) {
 	cfg, err := config.LoadConfig()
@@ -38,20 +35,16 @@ func prepareAgent(ctx context.Context) (
 		return
 	}
 
-	bus = channel.NewBus()
-	bus.RegisterIncomingChannel(cli.NewCLIInputChannel())
-	bus.RegisterOutgoingChannel(cli.NewCLIOutputChannel())
-
-	ag = agent.NewAgent(llm, bus, agent.AgentConfig{
+	ag = agent.NewAgent(llm, agent.AgentConfig{
 		RootCtx: ctx,
 		Model:   model,
 	})
 
-	return ag, bus, nil
+	return ag, nil
 }
 
-func restoreHistory(ag *agent.Agent) ([]string, error) {
-	history := make([]string, 0, 128)
+func restoreHistory(ag *agent.Agent) ([]uiMsg, error) {
+	history := make([]uiMsg, 0, 128)
 	// resume history if provided
 	if resumeSessionChatId == "" {
 		agentChatId = uuid.New().String()
@@ -63,9 +56,20 @@ func restoreHistory(ag *agent.Agent) ([]string, error) {
 		}
 		for _, msg := range historyMessages {
 			if msg.IsFromUser() {
-				history = append(history, youStyle.Render(youPrefix)+msg.Content)
+				history = append(history, uiMsg{
+					role: roleUser,
+					content: uiMsgContent{
+						content: msg.Content,
+					},
+				})
 			} else if msg.IsFromAssistant() {
-				history = append(history, agentStyle.Render(agentPrefix)+msg.Content)
+				history = append(history, uiMsg{
+					role: roleAssistant,
+					content: uiMsgContent{
+						content:          msg.Content,
+						reasoningContent: msg.ReasoningContent,
+					},
+				})
 			}
 		}
 	}

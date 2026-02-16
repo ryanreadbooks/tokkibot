@@ -176,7 +176,16 @@ func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId s
 							}
 						}
 					}
-					c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(msg.Content, toolCalls))
+
+					var reasoningContent *llmmodel.StringParam
+					if msg.ReasoningContent != "" {
+						reasoningContent = &llmmodel.StringParam{
+							Value: msg.ReasoningContent,
+						}
+					}
+
+					p := llmmodel.NewAssistantMessageParam(msg.Content, toolCalls, reasoningContent)
+					c.messageList = append(c.messageList, p)
 				case llmmodel.RoleTool:
 					callId, _ := msg.Extras["tool_call_id"].(string)
 					c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(callId, msg.Content))
@@ -210,8 +219,16 @@ func (c *ContextManager) AppendAssistantMessage(
 	inMsg *channelmodel.IncomingMessage,
 	msg *llmmodel.CompletionMessage,
 ) {
-	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(msg.Content, msg.GetToolCallParams()))
-	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addAssistantMessage(msg.Content, msg.ToolCalls)
+	var reasoningContent *llmmodel.StringParam
+	if msg.ReasoningContent != "" {
+		reasoningContent = &llmmodel.StringParam{Value: msg.ReasoningContent}
+	}
+	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(
+		msg.Content, msg.GetToolCallParams(), reasoningContent))
+	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addAssistantMessage(
+		msg.Content,
+		msg.ToolCalls,
+		msg.ReasoningContent)
 }
 
 func (c *ContextManager) GetMessageList() []llmmodel.MessageParam {
