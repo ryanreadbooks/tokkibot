@@ -151,10 +151,6 @@ func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId s
 	c.historyInjectOnce.Do(func() {
 		history, err := c.sessionMgr.GetSessionHistory(channel, chatId)
 		if err == nil {
-			// concat the last 50 messages
-			l := min(len(history), 50)
-			history = history[len(history)-l:]
-
 			for _, msg := range history {
 				switch msg.Role {
 				case llmmodel.RoleUser:

@@ -358,7 +358,6 @@ func toStreamResponseChunk(cur openai.ChatCompletionChunk) *llm.StreamResponseCh
 func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) <-chan *llm.StreamResponseChunk {
 	params, opts := toChatCompletionNewParams(req)
 	stream := o.client.Chat.Completions.NewStreaming(ctx, params, opts...)
-
 	ch := make(chan *llm.StreamResponseChunk, 16) // this should be buffered
 
 	go func() {

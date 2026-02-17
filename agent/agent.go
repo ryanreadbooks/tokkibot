@@ -136,11 +136,13 @@ func (a *Agent) Ask(ctx context.Context, msg *chmodel.IncomingMessage) string {
 }
 
 type AskStreamResultToolCall struct {
+	Round     int
 	Name      string
 	Arguments string
 }
 
 type AskStreamResultContent struct {
+	Round            int
 	Content          string
 	ReasoningContent string
 }
@@ -164,7 +166,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *chmodel.Incomi
 	curIter := 0
 	finalResult := ""
 	var lastResponse *llm.Response
-
+	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId) // lazy init
 	a.contextMgr.AppendUserMessage(inMsg)
 	for curIter <= maxIterAllowed {
 		curIter++
@@ -244,6 +246,7 @@ func (a *Agent) handleIncomingMessageStream(
 	result *AskStreamResult,
 ) {
 	curIter := 0
+	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId) // lazy init
 	a.contextMgr.AppendUserMessage(inMsg)
 
 	for curIter <= maxIterAllowed {
@@ -265,6 +268,7 @@ func (a *Agent) handleIncomingMessageStream(
 		wg.Go(func() {
 			for content := range streamPacked.Content {
 				result.Content <- &AskStreamResultContent{
+					Round:            curIter,
 					Content:          content.Content,
 					ReasoningContent: content.ReasoningContent,
 				}
@@ -277,6 +281,7 @@ func (a *Agent) handleIncomingMessageStream(
 			for toolCall := range streamPacked.ToolCall {
 				select {
 				case result.ToolCall <- &AskStreamResultToolCall{
+					Round:     curIter,
 					Name:      toolCall.Name,
 					Arguments: toolCall.ArgumentFragment,
 				}:
@@ -344,8 +349,7 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, tc *llmmodel.CompletionToo
 	return toolResult
 }
 
-func (a *Agent) buildLLMMessageRequest(inMsg *chmodel.IncomingMessage) *llm.Request {
-	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId)
+func (a *Agent) buildLLMMessageRequest(_ *chmodel.IncomingMessage) *llm.Request {
 	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
 	r.Temperature = modelTemperature
 	r.MaxTokens = maxTokenAllowed

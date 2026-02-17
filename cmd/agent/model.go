@@ -21,13 +21,6 @@ const (
 	roleAssistant = "assistant"
 )
 
-func giveupChannel[T any](c <-chan T) {
-	go func() {
-		for range c {
-		}
-	}()
-}
-
 var (
 	userStyleColor              = lipgloss.Color("#937dd8")
 	assistantStyleColor         = lipgloss.Color("#0f8b56")
@@ -88,17 +81,23 @@ type (
 		curToolCall        toolCallMsg
 
 		err error
+
+		curRound int
 	}
 
 	contentMsg struct {
+		round            int
 		content          string
 		reasoningContent string
 	}
 
 	toolCallMsg struct {
+		round     int
 		name      string
 		arguments string
 	}
+
+	clearRoundMsg int
 )
 
 const (
@@ -134,6 +133,7 @@ func initAgentModel(
 		toolCallViewport:   tcVp,
 		toolCallingSpinner: sp,
 		msgs:               initMsgs,
+		curRound:           -1,
 	}
 }
 
@@ -196,6 +196,12 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case contentMsg:
 		if len(m.msgs) != 0 {
+			if m.curRound != msg.round && msg.round != -1 {
+				// this is a new round
+				m.msgs = append(m.msgs, uiMsg{role: roleAssistant})
+				m.curRound = msg.round
+			}
+
 			idx := len(m.msgs) - 1
 			if old := m.msgs[idx]; old.role == roleAssistant {
 				m.msgs[idx] = uiMsg{
@@ -225,6 +231,10 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateMsgViewport()
 		m.toolCallViewport.GotoBottom()
+		m.msgViewport.GotoBottom()
+
+	case clearRoundMsg:
+		m.curRound = int(msg)
 
 	case errMsg:
 		m.err = msg
@@ -301,16 +311,21 @@ func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 	go func() {
 		for c := range stream.Content {
 			m.pg.Send(contentMsg{
+				round:            c.Round,
 				content:          c.Content,
 				reasoningContent: c.ReasoningContent,
 			})
 		}
+
+		// finish and clear round
+		m.pg.Send(clearRoundMsg(-1))
 	}()
 
 	// tool calling
 	go func() {
 		for tc := range stream.ToolCall {
 			m.pg.Send(toolCallMsg{
+				round:     tc.Round,
 				name:      tc.Name,
 				arguments: tc.Arguments,
 			})
