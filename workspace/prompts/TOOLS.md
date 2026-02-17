@@ -7,7 +7,7 @@ Tool calls have universial output json format:
 - `success` (required): Indicating whether tool call succeeded.
 - `data`: Tool call output data.
 - `err`: Tool call error message, empty if tool call is successful.
-**Example**:
+  **Example**:
 
 ```json
 {
@@ -28,6 +28,8 @@ Read the contents of a file at the given path. Output always include numbers in 
 - `limit`: (optional): Number of lines to read. Use with offset for large files to read in chunks
 
 **Example:**
+
+Read regular file:
 
 ```json
 {
@@ -92,6 +94,23 @@ Edit the content of a file at given path by replacing the specific string in the
 	"file_name": "/path/to/file",
 	"new_string": "Hello world",
 	"old_string": "Good morning"
+}
+```
+
+## load_ref
+
+Load content from a previously stored reference (e.g., tool call results). 
+Use this when you need to re-access large/structured data without repeating the original tool call.
+
+**Parameters:**
+
+- `name` (required): The reference identifier to load. Format: `@refs/{id}`
+
+**Example:**
+
+```json
+{
+	"name": "@refs/abcok091Z"
 }
 ```
 

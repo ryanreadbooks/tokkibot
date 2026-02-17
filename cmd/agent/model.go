@@ -122,14 +122,16 @@ func initAgentModel(
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
 
-	vp := viewport.New(80, 20)
+	msgVp := viewport.New(80, 20)
+	msgVp.MouseWheelEnabled = true
+	msgVp.KeyMap = viewport.KeyMap{}
 	tcVp := viewport.New(80, 5)
 
 	return agentModel{
 		ctx:                ctx,
 		ag:                 ag,
 		inputTextarea:      ta,
-		msgViewport:        vp,
+		msgViewport:        msgVp,
 		toolCallViewport:   tcVp,
 		toolCallingSpinner: sp,
 		msgs:               initMsgs,
@@ -166,7 +168,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		case tea.KeyCtrlC:
 			return m, tea.Quit
 		case tea.KeyEnter:
 			userInput := m.inputTextarea.Value()
@@ -181,8 +183,8 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msgs = append(m.msgs, uiMsg{role: roleAssistant})
 
 			// invoke agent loop
-			stream := m.ag.AskStream(m.ctx, &chmodel.IncomingMessage{
-				Channel: chmodel.ChannelCLI,
+			stream := m.ag.AskStream(m.ctx, &agent.UserMessage{
+				Channel: chmodel.ChannelCLI.String(),
 				ChatId:  agentChatId,
 				Created: time.Now().Unix(),
 				Content: userInput,

@@ -22,7 +22,7 @@ You are **tokkibot**, a capable AI coding assistant. Be concise, accurate, and h
 
 | Category | Tools |
 |----------|-------|
-| File Operations | `read_file`, `write_file`, `list_dir`, `edit_file` |
+| File Operations | `read_file`, `write_file`, `list_dir`, `edit_file`, `load_ref` |
 | Shell Operations | `shell` |
 | Skill Operations | `use_skill`|
 

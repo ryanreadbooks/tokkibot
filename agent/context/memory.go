@@ -1,4 +1,4 @@
-package agent
+package context
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 )
 
 type MemoryManagerConfig struct {
-	workspace string
+	Workspace string
 }
 
 const (
@@ -18,18 +18,18 @@ const (
 
 // memory manager for the agent
 type MemoryManager struct {
-	workspace string
+	Workspace string
 }
 
 func NewMemoryManager(c MemoryManagerConfig) *MemoryManager {
 	return &MemoryManager{
-		workspace: filepath.Join(c.workspace, "memory"),
+		Workspace: filepath.Join(c.Workspace, "memory"),
 	}
 }
 
 // Load long-term memory from the workspace
 func (m *MemoryManager) loadLongTerm() (string, error) {
-	fp := filepath.Join(m.workspace, longTermMemoryFile)
+	fp := filepath.Join(m.Workspace, longTermMemoryFile)
 	content, err := os.ReadFile(fp)
 	if err != nil {
 		return "", fmt.Errorf("failed to read long-term memory file: %w", err)
@@ -44,7 +44,7 @@ func (m *MemoryManager) loadShortTerm() (string, error) {
 	content := strings.Builder{}
 	content.Grow(1024 * 3)
 	for i := 0; i < 3; i++ {
-		memFile := filepath.Join(m.workspace, now.AddDate(0, 0, -i).Format(time.DateOnly), "MEMORY.md")
+		memFile := filepath.Join(m.Workspace, now.AddDate(0, 0, -i).Format(time.DateOnly), "MEMORY.md")
 		memContent, err := os.ReadFile(memFile)
 		if err != nil {
 			continue

@@ -7,17 +7,19 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
+	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
-	"github.com/ryanreadbooks/tokkibot/channel"
-	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+
+	// chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm"
 	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
 )
+
+type UserMessage = agcontext.UserInput
 
 const (
 	maxIterAllowed = 30
@@ -51,39 +53,27 @@ type Agent struct {
 	tools   map[string]tool.Invoker
 
 	// The context manager for the agent.
-	contextMgr *ContextManager
+	contextMgr *agcontext.ContextManager
 
 	// skill loader
 	skillLoader *skill.Loader
-
-	// incoming/outgoing channel bus
-	bus *channel.Bus
 }
 
 func NewAgent(
 	llm llm.LLM,
 	c AgentConfig,
 ) *Agent {
-	sessionManager := NewSessionManager(c.RootCtx, SessionManagerConfig{
-		workspace:    config.GetWorkspaceDir(),
-		saveInterval: 10 * time.Second,
-	})
-	memoryManager := NewMemoryManager(MemoryManagerConfig{
-		workspace: config.GetWorkspaceDir(),
-	})
-
 	skillLoader := skill.NewLoader()
 	if err := skillLoader.Init(); err != nil {
 		slog.Error("[agent] failed to init skill loader, now exit", "error", err)
 		os.Exit(1)
 	}
 
-	contextMgr, err := NewContextManage(c.RootCtx,
-		ContextManagerConfig{
-			workspace: config.GetWorkspaceDir(),
+	contextMgr, err := agcontext.NewContextManager(
+		c.RootCtx,
+		agcontext.ContextManagerConfig{
+			Workspace: config.GetWorkspaceDir(),
 		},
-		sessionManager,
-		memoryManager,
 		skillLoader,
 	)
 	if err != nil {
@@ -112,6 +102,7 @@ func (a *Agent) registerTools() {
 	a.RegisterTool(tools.WriteFile(allowDirs))
 	a.RegisterTool(tools.ListDir(allowDirs))
 	a.RegisterTool(tools.EditFile(allowDirs))
+	a.RegisterTool(tools.LoadRef())
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))
 }
@@ -131,7 +122,7 @@ func (a *Agent) RegisterTool(tool tool.Invoker) {
 	}
 }
 
-func (a *Agent) Ask(ctx context.Context, msg *chmodel.IncomingMessage) string {
+func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
 	return a.handleIncomingMessage(ctx, msg)
 }
 
@@ -152,7 +143,7 @@ type AskStreamResult struct {
 	ToolCall chan *AskStreamResultToolCall
 }
 
-func (a *Agent) AskStream(ctx context.Context, msg *chmodel.IncomingMessage) *AskStreamResult {
+func (a *Agent) AskStream(ctx context.Context, msg *UserMessage) *AskStreamResult {
 	res := AskStreamResult{
 		Content:  make(chan *AskStreamResultContent),
 		ToolCall: make(chan *AskStreamResultToolCall),
@@ -162,11 +153,11 @@ func (a *Agent) AskStream(ctx context.Context, msg *chmodel.IncomingMessage) *As
 	return &res
 }
 
-func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *chmodel.IncomingMessage) string {
+func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) string {
 	curIter := 0
 	finalResult := ""
 	var lastResponse *llm.Response
-	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId) // lazy init
+	a.contextMgr.InitSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
 	a.contextMgr.AppendUserMessage(inMsg)
 	for curIter <= maxIterAllowed {
 		curIter++
@@ -242,11 +233,11 @@ func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) llm.Stream
 
 func (a *Agent) handleIncomingMessageStream(
 	ctx context.Context,
-	inMsg *chmodel.IncomingMessage,
+	inMsg *UserMessage,
 	result *AskStreamResult,
 ) {
 	curIter := 0
-	a.contextMgr.InitHistoryMessages(inMsg.Channel, inMsg.ChatId) // lazy init
+	a.contextMgr.InitSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
 	a.contextMgr.AppendUserMessage(inMsg)
 
 	for curIter <= maxIterAllowed {
@@ -322,7 +313,7 @@ func (a *Agent) handleIncomingMessageStream(
 
 func (a *Agent) handleToolCall(
 	ctx context.Context,
-	inMsg *chmodel.IncomingMessage,
+	inMsg *UserMessage,
 	tc *llmmodel.CompletionToolCall,
 ) {
 	toolResult := a.getToolAndInvoke(ctx, tc)
@@ -349,7 +340,7 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, tc *llmmodel.CompletionToo
 	return toolResult
 }
 
-func (a *Agent) buildLLMMessageRequest(_ *chmodel.IncomingMessage) *llm.Request {
+func (a *Agent) buildLLMMessageRequest(_ *UserMessage) *llm.Request {
 	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
 	r.Temperature = modelTemperature
 	r.MaxTokens = maxTokenAllowed
@@ -370,8 +361,8 @@ func (a *Agent) buildLLMToolParams() []llmmodel.ToolParam {
 	return params
 }
 
-func (a *Agent) RetrieveSession(channel chmodel.Type, chatId string) ([]SessionMessage, error) {
-	history, err := a.contextMgr.sessionMgr.GetSessionHistory(channel, chatId)
+func (a *Agent) RetrieveSession(channel, chatId string) ([]agcontext.SessionLogItem, error) {
+	history, err := a.contextMgr.GetSessionLogHistory(channel, chatId)
 	if err != nil {
 		return nil, err
 	}
@@ -384,5 +375,5 @@ func (a *Agent) AvailableSkills() []*skill.Skill {
 }
 
 func (a *Agent) GetSystemPrompt() string {
-	return a.contextMgr.systemPrompts
+	return a.contextMgr.GetSystemPrompt()
 }

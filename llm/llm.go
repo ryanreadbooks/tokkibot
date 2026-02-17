@@ -94,3 +94,11 @@ type LLM interface {
 	// You should read from the returned channel until it is closed.
 	ChatCompletionStream(ctx context.Context, req *Request) <-chan *StreamResponseChunk
 }
+
+type EstimatedToken struct {
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+type TokenEstimator interface {
+	Estimate(ctx context.Context, req *Request) (EstimatedToken, error)
+}

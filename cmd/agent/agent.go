@@ -6,7 +6,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/agent"
+	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 
 	"github.com/spf13/cobra"
 )
@@ -81,8 +82,8 @@ func runAgentOnce(ctx context.Context, message string) error {
 		return err
 	}
 
-	answer := ag.Ask(ctx, &channelmodel.IncomingMessage{
-		Channel: channelmodel.ChannelCLI,
+	answer := ag.Ask(ctx, &agent.UserMessage{
+		Channel: chmodel.ChannelCLI.String(),
 		ChatId:  "one-time",
 		Created: time.Now().Unix(),
 		Content: message,
@@ -107,13 +108,15 @@ func runAgent(ctx context.Context, args []string) error {
 	fmt.Println("Session: ", agentChatId)
 
 	mod := initAgentModel(ctx, ag, history)
-	pg := tea.NewProgram(&mod)
+	pg := tea.NewProgram(&mod,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion())
 	mod.setPg(pg)
 	if _, err := pg.Run(); err != nil {
 		return err
 	}
 
-	fmt.Printf("\nSee you, use %s to resume conversation\n", agentChatId)
+	fmt.Printf("\nUse %s to resume conversation\n", agentChatId)
 
 	return nil
 }

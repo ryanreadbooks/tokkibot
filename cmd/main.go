@@ -1,11 +1,12 @@
 package main
 
 import (
-	"context"
+	"fmt"
 
 	"github.com/ryanreadbooks/tokkibot/cmd/agent"
 	"github.com/ryanreadbooks/tokkibot/cmd/onboard"
 	"github.com/ryanreadbooks/tokkibot/config"
+	"github.com/ryanreadbooks/tokkibot/pkg/process"
 	"github.com/spf13/cobra"
 )
 
@@ -21,8 +22,11 @@ func init() {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	ctx, cancel, wait := process.GetRootContext()
 	rootCmd.ExecuteContext(ctx)
+	cancel()
+
+	wait()
+
+	fmt.Println("See you next time!!")
 }

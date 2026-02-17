@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ryanreadbooks/tokkibot/agent/ref"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 )
@@ -33,7 +34,7 @@ func resolvePath(path string, allowDirs []string) (string, error) {
 }
 
 type ReadFileInput struct {
-	Path   string `json:"path"             jsonschema:"description=The path to the file to read from"`
+	Path   string `json:"path"             jsonschema:"description=The path to the file read from"`
 	Offset int    `json:"offset,omitempty" jsonschema:"description=Starting line number (1-indexed). Use for large files to read from specific line"`
 	Limit  int    `json:"limit,omitempty"  jsonschema:"description=Number of lines to read. Use with offset for large files to read in chunks"`
 }
@@ -58,6 +59,7 @@ func ReadFile(allowDirs []string) tool.Invoker {
 		if err != nil {
 			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)
 		}
+		defer f.Close()
 
 		scanner := bufio.NewScanner(f)
 		lines := []string{}
@@ -199,5 +201,30 @@ func EditFile(allowDirs []string) tool.Invoker {
 		}
 
 		return fmt.Sprintf("File %s edited successfully", cleanPath), nil
+	})
+}
+
+type LoadRefInput struct {
+	Name string `json:"name" jsonschema:"description=The reference name to load"`
+}
+
+// Load ref, similar to read file, but for better understanding this is tool is seperated.
+func LoadRef() tool.Invoker {
+	return tool.NewInvoker(tool.Info{
+		Name:        "load_ref",
+		Description: "Load content from a previously stored reference (e.g., tool call results).",
+	}, func(ctx context.Context, input *LoadRefInput) (string, error) {
+		// refName example: @refs/xxx/xxx
+		fullpath, err := ref.Fullpath(input.Name)
+		if err != nil {
+			return "", fmt.Errorf("invalid refname %s: %w", input, err)
+		}
+
+		content, err := os.ReadFile(fullpath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read %s: %w", input, err)
+		}
+
+		return string(content), err
 	})
 }

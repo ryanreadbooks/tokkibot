@@ -1,4 +1,4 @@
-package agent
+package context
 
 import (
 	"context"
@@ -11,12 +11,9 @@ import (
 	"text/template"
 	"time"
 
-	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/config"
 	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
-
-	"github.com/mitchellh/mapstructure"
 )
 
 type promptBuiltinInfo struct {
@@ -39,25 +36,30 @@ type ContextManager struct {
 
 	historyInjectOnce sync.Once
 	messageList       []llmmodel.MessageParam
-	sessionMgr        *SessionManager
+	sessionMgr        *SessionLogManager
 	memoryMgr         *MemoryManager
 	skillLoader       *skill.Loader
 }
 
 type ContextManagerConfig struct {
-	workspace string
+	Workspace string
 }
 
-func NewContextManage(
+func NewContextManager(
 	ctx context.Context,
 	c ContextManagerConfig,
-	sessionManager *SessionManager,
-	memoryManager *MemoryManager,
 	skillLoader *skill.Loader,
 ) (*ContextManager, error) {
+	sessMgr := NewSessionLogManager(ctx, SessionLogManagerConfig{
+		workspace:    c.Workspace,
+		saveInterval: 10 * time.Second,
+	})
+	memoryMgr := NewMemoryManager(MemoryManagerConfig{
+		Workspace: c.Workspace,
+	})
 	mgr := &ContextManager{
-		sessionMgr:  sessionManager,
-		memoryMgr:   memoryManager,
+		sessionMgr:  sessMgr,
+		memoryMgr:   memoryMgr,
 		skillLoader: skillLoader,
 	}
 
@@ -77,10 +79,13 @@ func (c *ContextManager) renderPrompts(s string) string {
 		panic(err)
 	}
 
+	now := time.Now()
+	nowWithWeekday := fmt.Sprintf("%s, %s", now.String(), now.Weekday().String())
+
 	builtinInfo := promptBuiltinInfo{
 		Cwd:             config.GetProjectDir(),
 		Workspace:       config.GetWorkspaceDir(),
-		Now:             time.Now().String(),
+		Now:             nowWithWeekday,
 		Runtime:         runtime.GOOS,
 		AvailableSkills: skill.SkillsAsPrompt(c.skillLoader.Skills()),
 	}
@@ -146,32 +151,17 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	return nil
 }
 
-func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId string) {
+func (c *ContextManager) InitSessionLogs(channel, chatId string) {
 	// Load history session messages into message list for the first time
 	c.historyInjectOnce.Do(func() {
-		history, err := c.sessionMgr.GetSessionHistory(channel, chatId)
+		history, err := c.sessionMgr.getHistory(channel, chatId)
 		if err == nil {
 			for _, msg := range history {
 				switch msg.Role {
 				case llmmodel.RoleUser:
 					c.messageList = append(c.messageList, llmmodel.NewUserMessageParam(msg.Content))
 				case llmmodel.RoleAssistant:
-					val := msg.Extras["tool_calls"] // []map[string]any
-					var (
-						toolCalls           []*llmmodel.ToolCallParam
-						completionToolCalls []llmmodel.CompletionToolCall
-					)
-
-					err = mapstructure.Decode(val, &completionToolCalls)
-					if err == nil {
-						toolCalls = make([]*llmmodel.ToolCallParam, 0, len(completionToolCalls))
-						for _, toolCall := range completionToolCalls {
-							// we have to make sure tool call id exists
-							if toolCall.Id != "" {
-								toolCalls = append(toolCalls, toolCall.ToToolCallParam())
-							}
-						}
-					}
+					toolCalls := UnmarshalExtraToolCalls(msg.Extras)
 
 					var reasoningContent *llmmodel.StringParam
 					if msg.ReasoningContent != "" {
@@ -180,10 +170,14 @@ func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId s
 						}
 					}
 
-					p := llmmodel.NewAssistantMessageParam(msg.Content, toolCalls, reasoningContent)
+					p := llmmodel.NewAssistantMessageParam(
+						msg.Content,
+						toolCalls,
+						reasoningContent,
+					)
 					c.messageList = append(c.messageList, p)
 				case llmmodel.RoleTool:
-					callId, _ := msg.Extras["tool_call_id"].(string)
+					callId := UnmarshalExtraToolCallId(msg.Extras)
 					c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(callId, msg.Content))
 				}
 			}
@@ -191,28 +185,28 @@ func (c *ContextManager) InitHistoryMessages(channel channelmodel.Type, chatId s
 	})
 }
 
-func (c *ContextManager) AppendUserMessage(inMsg *channelmodel.IncomingMessage) []llmmodel.MessageParam {
+func (c *ContextManager) AppendUserMessage(inMsg *UserInput) []llmmodel.MessageParam {
 	// we also should store the incoming message for future conversation
 	userMsg := llmmodel.NewUserMessageParam(inMsg.Content)
 	c.messageList = append(c.messageList, userMsg)
-	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addUserMessage(inMsg.Content)
+	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addUserMessage(inMsg.Content)
 
 	return c.messageList
 }
 
 // Add a tool call result (usually generated locally) to the message list.
 func (c *ContextManager) AppendToolResult(
-	inMsg *channelmodel.IncomingMessage,
+	inMsg *UserInput,
 	toolCall *llmmodel.CompletionToolCall,
 	result string, // the result of the toolCall with id
 ) {
 	c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(toolCall.Id, result))
-	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addToolMessage(toolCall.Id, result)
+	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addToolMessage(toolCall.Id, result)
 }
 
 // Add an assistant message (responded from the LLM) to the message list.
 func (c *ContextManager) AppendAssistantMessage(
-	inMsg *channelmodel.IncomingMessage,
+	inMsg *UserInput,
 	msg *llmmodel.CompletionMessage,
 ) {
 	var reasoningContent *llmmodel.StringParam
@@ -221,7 +215,7 @@ func (c *ContextManager) AppendAssistantMessage(
 	}
 	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(
 		msg.Content, msg.GetToolCallParams(), reasoningContent))
-	c.sessionMgr.GetSession(inMsg.Channel, inMsg.ChatId).addAssistantMessage(
+	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addAssistantMessage(
 		msg.Content,
 		msg.ToolCalls,
 		msg.ReasoningContent)
@@ -229,4 +223,14 @@ func (c *ContextManager) AppendAssistantMessage(
 
 func (c *ContextManager) GetMessageList() []llmmodel.MessageParam {
 	return c.messageList
+}
+
+func (c *ContextManager) GetSystemPrompt() string {
+	return c.systemPrompts
+}
+
+func (c *ContextManager) GetSessionLogHistory(channel, chatId string) (
+	[]SessionLogItem, error,
+) {
+	return c.sessionMgr.getHistory(channel, chatId)
 }

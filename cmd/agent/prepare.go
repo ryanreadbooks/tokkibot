@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
-	channelmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm/factory"
 )
@@ -50,7 +50,7 @@ func restoreHistory(ag *agent.Agent) ([]uiMsg, error) {
 		agentChatId = uuid.New().String()
 	} else {
 		agentChatId = resumeSessionChatId
-		historyMessages, err := ag.RetrieveSession(channelmodel.ChannelCLI, resumeSessionChatId)
+		historyMessages, err := ag.RetrieveSession(chmodel.ChannelCLI.String(), resumeSessionChatId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve session: %w", err)
 		}
