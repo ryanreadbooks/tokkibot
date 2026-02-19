@@ -1,4 +1,4 @@
-package llm
+package schema
 
 import (
 	"context"
@@ -7,17 +7,16 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ryanreadbooks/tokkibot/llm/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/safe"
 	"github.com/ryanreadbooks/tokkibot/pkg/xmap"
 )
 
-func SyncReadStream(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error) {
+func SyncReadStream(ch <-chan *StreamResponseChunk) ([]StreamChoice, error) {
 	// choice index -> choice
-	choicesMap := make(map[int64]model.StreamChoice)
+	choicesMap := make(map[int64]StreamChoice)
 
 	// choice index -> tool call index -> tool call
-	choicesToolCallsMap := make(map[int64]map[int64]model.StreamChoiceDeltaToolCall)
+	choicesToolCallsMap := make(map[int64]map[int64]StreamChoiceDeltaToolCall)
 	for chunk := range ch {
 		if chunk.Err != nil {
 			return nil, chunk.Err
@@ -28,7 +27,7 @@ func SyncReadStream(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error
 			if existing, ok := choicesMap[curIdx]; ok {
 				existing.Delta.Content += choice.Delta.Content
 				if choice.FinishReason != "" {
-					existing.FinishReason = model.FinishReason(choice.FinishReason)
+					existing.FinishReason = FinishReason(choice.FinishReason)
 				}
 				choicesMap[curIdx] = existing
 			} else {
@@ -45,7 +44,7 @@ func SyncReadStream(ch <-chan *StreamResponseChunk) ([]model.StreamChoice, error
 							choicesToolCallsMap[curIdx][toolCall.Index] = toolCall
 						}
 					} else {
-						choicesToolCallsMap[curIdx] = make(map[int64]model.StreamChoiceDeltaToolCall)
+						choicesToolCallsMap[curIdx] = make(map[int64]StreamChoiceDeltaToolCall)
 						choicesToolCallsMap[curIdx][toolCall.Index] = toolCall
 					}
 				}
@@ -81,15 +80,15 @@ type streamToolCallBuffer struct {
 	Id        string
 	Name      string
 	Arguments *strings.Builder
-	Type      model.ToolCallType
+	Type      ToolCallType
 }
 
-type StreamToolCallHandler func(ctx context.Context, tc model.StreamChoiceDeltaToolCall)
+type StreamToolCallHandler func(ctx context.Context, tc StreamChoiceDeltaToolCall)
 
 type StreamContentFragment struct {
 	Content          string
 	ReasoningContent string
-	FinishReason     model.FinishReason
+	FinishReason     FinishReason
 }
 
 type StreamToolCallFragment struct {
@@ -108,11 +107,11 @@ func onStreamToolCallAccumulated(
 ) func(tcbs []*streamToolCallBuffer) {
 	return func(tcbs []*streamToolCallBuffer) {
 		for _, tc := range tcbs {
-			handler(ctx, model.StreamChoiceDeltaToolCall{
+			handler(ctx, StreamChoiceDeltaToolCall{
 				Index: tc.Index,
 				Type:  tc.Type,
 				Id:    tc.Id,
-				Function: model.CompletionToolCallFunction{
+				Function: CompletionToolCallFunction{
 					Name:      tc.Name,
 					Arguments: tc.Arguments.String(),
 				},
@@ -166,7 +165,7 @@ func readStreamResponseChunk(
 		if chunk.Err != nil {
 			contentCh <- &StreamContentFragment{
 				Content:      fmt.Sprintf("error: %v", chunk.Err),
-				FinishReason: model.FinishReasonStop,
+				FinishReason: FinishReasonStop,
 			}
 			break
 		}

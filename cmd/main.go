@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/ryanreadbooks/tokkibot/cmd/agent"
 	"github.com/ryanreadbooks/tokkibot/cmd/onboard"
 	"github.com/ryanreadbooks/tokkibot/config"
@@ -27,6 +25,4 @@ func main() {
 	cancel()
 
 	wait()
-
-	fmt.Println("See you next time!!")
 }

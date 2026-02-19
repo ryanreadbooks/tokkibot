@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/ryanreadbooks/tokkibot/llm"
-	"github.com/ryanreadbooks/tokkibot/llm/model"
+	"github.com/ryanreadbooks/tokkibot/llm/schema"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -48,7 +48,7 @@ func New(config Config) (*OpenAI, error) {
 	}, nil
 }
 
-func toSystemMessageParamUnion(param *model.SystemMessageParam) *openai.ChatCompletionSystemMessageParam {
+func toSystemMessageParamUnion(param *schema.SystemMessageParam) *openai.ChatCompletionSystemMessageParam {
 	if param != nil {
 		union := &openai.ChatCompletionSystemMessageParam{}
 		if param.String != nil {
@@ -69,7 +69,7 @@ func toSystemMessageParamUnion(param *model.SystemMessageParam) *openai.ChatComp
 	return nil
 }
 
-func toUserMessageParamUnion(param *model.UserMessageParam) *openai.ChatCompletionUserMessageParam {
+func toUserMessageParamUnion(param *schema.UserMessageParam) *openai.ChatCompletionUserMessageParam {
 	if param != nil {
 		union := &openai.ChatCompletionUserMessageParam{}
 		if param.String != nil {
@@ -109,7 +109,7 @@ func toUserMessageParamUnion(param *model.UserMessageParam) *openai.ChatCompleti
 	return nil
 }
 
-func toAssistantMessageParamUnion(param *model.AssistantMessageParam) *openai.ChatCompletionAssistantMessageParam {
+func toAssistantMessageParamUnion(param *schema.AssistantMessageParam) *openai.ChatCompletionAssistantMessageParam {
 	if param != nil {
 		union := &openai.ChatCompletionAssistantMessageParam{}
 		if param.Content != nil {
@@ -150,7 +150,7 @@ func toAssistantMessageParamUnion(param *model.AssistantMessageParam) *openai.Ch
 	return nil
 }
 
-func toToolMessageParamUnion(param *model.ToolMessageParam) *openai.ChatCompletionToolMessageParam {
+func toToolMessageParamUnion(param *schema.ToolMessageParam) *openai.ChatCompletionToolMessageParam {
 	if param != nil {
 		union := &openai.ChatCompletionToolMessageParam{
 			ToolCallID: param.ToolCallId,
@@ -173,7 +173,7 @@ func toToolMessageParamUnion(param *model.ToolMessageParam) *openai.ChatCompleti
 	return nil
 }
 
-func toChatCompletionMessageParamUnion(param *model.MessageParam) openai.ChatCompletionMessageParamUnion {
+func toChatCompletionMessageParamUnion(param *schema.MessageParam) openai.ChatCompletionMessageParamUnion {
 	union := openai.ChatCompletionMessageParamUnion{
 		OfSystem:    toSystemMessageParamUnion(param.SystemMessageParam),
 		OfUser:      toUserMessageParamUnion(param.UserMessageParam),
@@ -184,7 +184,7 @@ func toChatCompletionMessageParamUnion(param *model.MessageParam) openai.ChatCom
 	return union
 }
 
-func toToolParamUnion(param *model.ToolParam) openai.ChatCompletionToolUnionParam {
+func toToolParamUnion(param *schema.ToolParam) openai.ChatCompletionToolUnionParam {
 	tool := openai.ChatCompletionToolUnionParam{}
 	if param.Definition != nil {
 		tool.OfFunction = &openai.ChatCompletionFunctionToolParam{
@@ -199,7 +199,7 @@ func toToolParamUnion(param *model.ToolParam) openai.ChatCompletionToolUnionPara
 	return tool
 }
 
-func toChatCompletionNewParams(req *llm.Request) (openai.ChatCompletionNewParams, []option.RequestOption) {
+func toChatCompletionNewParams(req *schema.Request) (openai.ChatCompletionNewParams, []option.RequestOption) {
 	params := openai.ChatCompletionNewParams{
 		Model: req.Model,
 		N:     openaiparam.NewOpt(max(1, req.N)),
@@ -238,13 +238,13 @@ func toChatCompletionNewParams(req *llm.Request) (openai.ChatCompletionNewParams
 	return params, opts
 }
 
-func toChoice(choice openai.ChatCompletionChoice) model.Choice {
-	toolCalls := make([]model.CompletionToolCall, 0, len(choice.Message.ToolCalls))
+func toChoice(choice openai.ChatCompletionChoice) schema.Choice {
+	toolCalls := make([]schema.CompletionToolCall, 0, len(choice.Message.ToolCalls))
 	for _, toolCall := range choice.Message.ToolCalls {
-		toolCalls = append(toolCalls, model.CompletionToolCall{
+		toolCalls = append(toolCalls, schema.CompletionToolCall{
 			Id:   toolCall.ID,
-			Type: model.ToolCallTypeFunction,
-			Function: model.CompletionToolCallFunction{
+			Type: schema.ToolCallTypeFunction,
+			Function: schema.CompletionToolCallFunction{
 				Name:      toolCall.Function.Name,
 				Arguments: toolCall.Function.Arguments,
 			},
@@ -256,11 +256,11 @@ func toChoice(choice openai.ChatCompletionChoice) model.Choice {
 	_ = json.Unmarshal([]byte(reasoningContent.Raw()), &rs)
 
 	// for custom field not supported by official openai sdk
-	return model.Choice{
-		FinishReason: model.FinishReason(choice.FinishReason),
+	return schema.Choice{
+		FinishReason: schema.FinishReason(choice.FinishReason),
 		Index:        choice.Index,
-		Message: model.CompletionMessage{
-			Role:             model.Role(choice.Message.Role),
+		Message: schema.CompletionMessage{
+			Role:             schema.Role(choice.Message.Role),
 			Content:          choice.Message.Content,
 			ReasoningContent: rs,
 			ToolCalls:        toolCalls,
@@ -268,8 +268,8 @@ func toChoice(choice openai.ChatCompletionChoice) model.Choice {
 	}
 }
 
-func toChoices(choices []openai.ChatCompletionChoice) []model.Choice {
-	chs := make([]model.Choice, 0, len(choices))
+func toChoices(choices []openai.ChatCompletionChoice) []schema.Choice {
+	chs := make([]schema.Choice, 0, len(choices))
 
 	for _, choice := range choices {
 		chs = append(chs, toChoice(choice))
@@ -278,21 +278,21 @@ func toChoices(choices []openai.ChatCompletionChoice) []model.Choice {
 	return chs
 }
 
-func (o *OpenAI) ChatCompletion(ctx context.Context, req *llm.Request) (*llm.Response, error) {
+func (o *OpenAI) ChatCompletion(ctx context.Context, req *schema.Request) (*schema.Response, error) {
 	params, opts := toChatCompletionNewParams(req)
 	resp, err := o.client.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion new: %w", err)
 	}
 
-	return &llm.Response{
+	return &schema.Response{
 		Id:          resp.ID,
 		Object:      string(resp.Object.Default()),
 		Created:     resp.Created,
 		Model:       resp.Model,
 		ServiceTier: string(resp.ServiceTier),
 		Choices:     toChoices(resp.Choices),
-		Usage: model.CompletionUsage{
+		Usage: schema.CompletionUsage{
 			CompletionTokens: resp.Usage.CompletionTokens,
 			PromptTokens:     resp.Usage.PromptTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
@@ -300,14 +300,14 @@ func (o *OpenAI) ChatCompletion(ctx context.Context, req *llm.Request) (*llm.Res
 	}, nil
 }
 
-func toStreamChoice(choice openai.ChatCompletionChunkChoice) model.StreamChoice {
-	toolCalls := make([]model.StreamChoiceDeltaToolCall, 0, len(choice.Delta.ToolCalls))
+func toStreamChoice(choice openai.ChatCompletionChunkChoice) schema.StreamChoice {
+	toolCalls := make([]schema.StreamChoiceDeltaToolCall, 0, len(choice.Delta.ToolCalls))
 	for _, tc := range choice.Delta.ToolCalls {
-		toolCalls = append(toolCalls, model.StreamChoiceDeltaToolCall{
+		toolCalls = append(toolCalls, schema.StreamChoiceDeltaToolCall{
 			Index: tc.Index,
 			Id:    tc.ID,
-			Type:  model.ToolCallType(tc.Type),
-			Function: model.CompletionToolCallFunction{
+			Type:  schema.ToolCallType(tc.Type),
+			Function: schema.CompletionToolCallFunction{
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
 			},
@@ -318,11 +318,11 @@ func toStreamChoice(choice openai.ChatCompletionChunkChoice) model.StreamChoice 
 	var rs string
 	_ = json.Unmarshal([]byte(reasoningContent.Raw()), &rs)
 
-	return model.StreamChoice{
-		FinishReason: model.FinishReason(choice.FinishReason),
+	return schema.StreamChoice{
+		FinishReason: schema.FinishReason(choice.FinishReason),
 		Index:        choice.Index,
-		Delta: model.StreamChoiceDelta{
-			Role:             model.Role(choice.Delta.Role),
+		Delta: schema.StreamChoiceDelta{
+			Role:             schema.Role(choice.Delta.Role),
 			Content:          choice.Delta.Content,
 			ToolCalls:        toolCalls,
 			ReasoningContent: rs,
@@ -330,23 +330,23 @@ func toStreamChoice(choice openai.ChatCompletionChunkChoice) model.StreamChoice 
 	}
 }
 
-func toStreamChoices(choices []openai.ChatCompletionChunkChoice) []model.StreamChoice {
-	chs := make([]model.StreamChoice, 0, len(choices))
+func toStreamChoices(choices []openai.ChatCompletionChunkChoice) []schema.StreamChoice {
+	chs := make([]schema.StreamChoice, 0, len(choices))
 	for _, choice := range choices {
 		chs = append(chs, toStreamChoice(choice))
 	}
 	return chs
 }
 
-func toStreamResponseChunk(cur openai.ChatCompletionChunk) *llm.StreamResponseChunk {
-	chunk := llm.StreamResponseChunk{
+func toStreamResponseChunk(cur openai.ChatCompletionChunk) *schema.StreamResponseChunk {
+	chunk := schema.StreamResponseChunk{
 		Id:          cur.ID,
 		Created:     cur.Created,
 		Model:       cur.Model,
 		Object:      string(cur.Object.Default()),
 		Choices:     toStreamChoices(cur.Choices),
 		ServiceTier: string(cur.ServiceTier),
-		Usage: model.CompletionUsage{
+		Usage: schema.CompletionUsage{
 			CompletionTokens: cur.Usage.CompletionTokens,
 			PromptTokens:     cur.Usage.PromptTokens,
 			TotalTokens:      cur.Usage.TotalTokens,
@@ -355,15 +355,15 @@ func toStreamResponseChunk(cur openai.ChatCompletionChunk) *llm.StreamResponseCh
 	return &chunk
 }
 
-func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) <-chan *llm.StreamResponseChunk {
+func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *schema.Request) <-chan *schema.StreamResponseChunk {
 	params, opts := toChatCompletionNewParams(req)
 	stream := o.client.Chat.Completions.NewStreaming(ctx, params, opts...)
-	ch := make(chan *llm.StreamResponseChunk, 16) // this should be buffered
+	ch := make(chan *schema.StreamResponseChunk, 16) // this should be buffered
 
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
-				ch <- &llm.StreamResponseChunk{Err: fmt.Errorf("panic: %v", p)}
+				ch <- &schema.StreamResponseChunk{Err: fmt.Errorf("panic: %v", p)}
 			}
 
 			stream.Close()
@@ -380,7 +380,7 @@ func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *llm.Request) <-c
 		}
 
 		if stream.Err() != nil {
-			ch <- &llm.StreamResponseChunk{Err: stream.Err()}
+			ch <- &schema.StreamResponseChunk{Err: stream.Err()}
 		}
 	}()
 

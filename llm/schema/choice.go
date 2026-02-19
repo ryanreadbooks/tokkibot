@@ -1,4 +1,4 @@
-package model
+package schema
 
 type Choice struct {
 	FinishReason FinishReason

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
@@ -50,27 +52,37 @@ func restoreHistory(ag *agent.Agent) ([]uiMsg, error) {
 		agentChatId = uuid.New().String()
 	} else {
 		agentChatId = resumeSessionChatId
-		historyMessages, err := ag.RetrieveSession(chmodel.ChannelCLI.String(), resumeSessionChatId)
-		if err != nil {
-			return nil, fmt.Errorf("failed to retrieve session: %w", err)
+	}
+
+	// init
+	err := ag.InitSession(chmodel.ChannelCLI.String(), agentChatId)
+	if err != nil {
+		return nil, err
+	}
+
+	historyMessages, err := ag.RetrieveMessageHistory(chmodel.ChannelCLI.String(), agentChatId)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("session not found")
 		}
-		for _, msg := range historyMessages {
-			if msg.IsFromUser() {
-				history = append(history, uiMsg{
-					role: roleUser,
-					content: uiMsgContent{
-						content: msg.Content,
-					},
-				})
-			} else if msg.IsFromAssistant() {
-				history = append(history, uiMsg{
-					role: roleAssistant,
-					content: uiMsgContent{
-						content:          msg.Content,
-						reasoningContent: msg.ReasoningContent,
-					},
-				})
-			}
+		return nil, fmt.Errorf("failed to retrieve session: %w", err)
+	}
+	for _, msg := range historyMessages {
+		if msg.IsFromUser() {
+			history = append(history, uiMsg{
+				role: roleUser,
+				content: uiMsgContent{
+					content: msg.Message.UserMessageParam.String.GetValue(),
+				},
+			})
+		} else if msg.IsFromAssistant() {
+			history = append(history, uiMsg{
+				role: roleAssistant,
+				content: uiMsgContent{
+					content:          msg.Message.AssistantMessageParam.Content.GetValue(),
+					reasoningContent: msg.Message.AssistantMessageParam.ReasoningContent.GetValue(),
+				},
+			})
 		}
 	}
 

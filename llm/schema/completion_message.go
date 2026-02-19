@@ -1,4 +1,4 @@
-package model
+package schema
 
 // completion message responsed from LLM service
 type CompletionMessage struct {

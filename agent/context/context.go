@@ -11,9 +11,10 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/ryanreadbooks/tokkibot/agent/context/session"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/config"
-	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
+	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
 type promptBuiltinInfo struct {
@@ -35,8 +36,9 @@ type ContextManager struct {
 	systemPrompts string
 
 	historyInjectOnce sync.Once
-	messageList       []llmmodel.MessageParam
-	sessionMgr        *SessionLogManager
+	messageList       []schema.MessageParam
+	aofLogManager     *session.AOFLogManager
+	contextLogManager *session.ContextLogManager
 	memoryMgr         *MemoryManager
 	skillLoader       *skill.Loader
 }
@@ -50,17 +52,19 @@ func NewContextManager(
 	c ContextManagerConfig,
 	skillLoader *skill.Loader,
 ) (*ContextManager, error) {
-	sessMgr := NewSessionLogManager(ctx, SessionLogManagerConfig{
-		workspace:    c.Workspace,
-		saveInterval: 10 * time.Second,
-	})
+	sessionCfg := session.LogManagerConfig{
+		Workspace: filepath.Join(c.Workspace, "sessions"),
+	}
+	aofLogMgr := session.NewAOFLogManager(ctx, sessionCfg)
+	contextLogMgr := session.NewContextLogManager(ctx, sessionCfg)
 	memoryMgr := NewMemoryManager(MemoryManagerConfig{
 		Workspace: c.Workspace,
 	})
 	mgr := &ContextManager{
-		sessionMgr:  sessMgr,
-		memoryMgr:   memoryMgr,
-		skillLoader: skillLoader,
+		aofLogManager:     aofLogMgr,
+		contextLogManager: contextLogMgr,
+		memoryMgr:         memoryMgr,
+		skillLoader:       skillLoader,
 	}
 
 	if err := mgr.bootstrapSystemPrompts(); err != nil {
@@ -145,92 +149,153 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	c.systemPrompts = c.renderPrompts(c.systemPrompts)
 	// the first one is system prompt
 	c.messageList = append(c.messageList,
-		llmmodel.NewSystemMessageParam(c.systemPrompts),
+		schema.NewSystemMessageParam(c.systemPrompts),
 	)
 
 	return nil
 }
 
-func (c *ContextManager) InitSessionLogs(channel, chatId string) {
+func (c *ContextManager) InitFromSessionLogs(channel, chatId string) {
 	// Load history session messages into message list for the first time
 	c.historyInjectOnce.Do(func() {
-		history, err := c.sessionMgr.getHistory(channel, chatId)
+		var (
+			history []session.LogItem
+			err     error
+		)
+		history, err = c.aofLogManager.GetLogItems(channel, chatId)
 		if err == nil {
 			for _, msg := range history {
-				switch msg.Role {
-				case llmmodel.RoleUser:
-					c.messageList = append(c.messageList, llmmodel.NewUserMessageParam(msg.Content))
-				case llmmodel.RoleAssistant:
-					toolCalls := UnmarshalExtraToolCalls(msg.Extras)
-
-					var reasoningContent *llmmodel.StringParam
-					if msg.ReasoningContent != "" {
-						reasoningContent = &llmmodel.StringParam{
-							Value: msg.ReasoningContent,
-						}
-					}
-
-					p := llmmodel.NewAssistantMessageParam(
-						msg.Content,
-						toolCalls,
-						reasoningContent,
-					)
-					c.messageList = append(c.messageList, p)
-				case llmmodel.RoleTool:
-					callId := UnmarshalExtraToolCallId(msg.Extras)
-					c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(callId, msg.Content))
-				}
+				c.messageList = append(c.messageList, *msg.Message)
 			}
 		}
 	})
 }
 
-func (c *ContextManager) AppendUserMessage(inMsg *UserInput) []llmmodel.MessageParam {
+func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]schema.MessageParam, error) {
 	// we also should store the incoming message for future conversation
-	userMsg := llmmodel.NewUserMessageParam(inMsg.Content)
-	c.messageList = append(c.messageList, userMsg)
-	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addUserMessage(inMsg.Content)
+	userMsg := schema.NewUserMessageParam(inMsg.Content)
+	aofLog, err := c.aofLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return nil, err
+	}
+	err = aofLog.AddUserMessage(&userMsg)
+	if err != nil {
+		return nil, err
+	}
+	contextLog, err := c.contextLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return nil, err
+	}
+	err = contextLog.AddUserMessage(&userMsg)
+	if err != nil {
+		return nil, err
+	}
 
-	return c.messageList
+	c.messageList = append(c.messageList, userMsg)
+	return c.messageList, nil
 }
 
 // Add a tool call result (usually generated locally) to the message list.
 func (c *ContextManager) AppendToolResult(
 	inMsg *UserInput,
-	toolCall *llmmodel.CompletionToolCall,
+	toolCall *schema.CompletionToolCall,
 	result string, // the result of the toolCall with id
-) {
-	c.messageList = append(c.messageList, llmmodel.NewToolMessageParam(toolCall.Id, result))
-	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addToolMessage(toolCall.Id, result)
+) error {
+	msgParam := schema.NewToolMessageParam(toolCall.Id, result)
+	aofLog, err := c.aofLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return err
+	}
+	err = aofLog.AddToolMessage(&msgParam)
+	if err != nil {
+		return err
+	}
+	contextLog, err := c.contextLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return err
+	}
+	err = contextLog.AddToolMessage(&msgParam)
+	if err != nil {
+		return err
+	}
+	c.messageList = append(c.messageList, msgParam)
+
+	return nil
 }
 
 // Add an assistant message (responded from the LLM) to the message list.
 func (c *ContextManager) AppendAssistantMessage(
 	inMsg *UserInput,
-	msg *llmmodel.CompletionMessage,
-) {
-	var reasoningContent *llmmodel.StringParam
+	msg *schema.CompletionMessage,
+) error {
+	var reasoningContent *schema.StringParam
 	if msg.ReasoningContent != "" {
-		reasoningContent = &llmmodel.StringParam{Value: msg.ReasoningContent}
+		reasoningContent = &schema.StringParam{Value: msg.ReasoningContent}
 	}
-	c.messageList = append(c.messageList, llmmodel.NewAssistantMessageParam(
-		msg.Content, msg.GetToolCallParams(), reasoningContent))
-	c.sessionMgr.get(inMsg.Channel, inMsg.ChatId).addAssistantMessage(
+	msgParam := schema.NewAssistantMessageParam(
 		msg.Content,
-		msg.ToolCalls,
-		msg.ReasoningContent)
+		msg.GetToolCallParams(),
+		reasoningContent,
+	)
+	aofLog, err := c.aofLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return err
+	}
+	err = aofLog.AddAssistantMessage(&msgParam)
+	if err != nil {
+		return err
+	}
+	contextLog, err := c.contextLogManager.GetOrCreate(inMsg.Channel, inMsg.ChatId)
+	if err != nil {
+		return err
+	}
+	err = contextLog.AddAssistantMessage(&msgParam)
+	if err != nil {
+		return err
+	}
+	c.messageList = append(c.messageList, msgParam)
+
+	return nil
 }
 
-func (c *ContextManager) GetMessageList() []llmmodel.MessageParam {
-	return c.messageList
+func (c *ContextManager) GetMessageContext(channel, chatId string) (
+	[]schema.MessageParam, error,
+) {
+	// return c.messageList
+	log, err := c.contextLogManager.GetOrCreate(channel, chatId)
+	if err != nil {
+		return nil, err
+	}
+
+	logs := log.GetLogs()
+	msgList := make([]schema.MessageParam, 0, len(logs))
+	for _, log := range logs {
+		msgList = append(msgList, *log.Message)
+	}
+
+	return msgList, nil
 }
 
 func (c *ContextManager) GetSystemPrompt() string {
 	return c.systemPrompts
 }
 
-func (c *ContextManager) GetSessionLogHistory(channel, chatId string) (
-	[]SessionLogItem, error,
+func (c *ContextManager) GetMessageHistory(channel, chatId string) (
+	[]session.LogItem, error,
 ) {
-	return c.sessionMgr.getHistory(channel, chatId)
+	return c.aofLogManager.GetLogItems(channel, chatId)
+}
+
+func (s *ContextManager) InitSession(channel, chatId string) error {
+	_, err := s.aofLogManager.GetOrCreate(channel, chatId)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.contextLogManager.GetOrCreate(channel, chatId)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

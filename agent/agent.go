@@ -2,21 +2,18 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 
 	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
 
-	// chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm"
-	llmmodel "github.com/ryanreadbooks/tokkibot/llm/model"
+	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
 type UserMessage = agcontext.UserInput
@@ -57,6 +54,9 @@ type Agent struct {
 
 	// skill loader
 	skillLoader *skill.Loader
+
+	cachedReqsMu sync.RWMutex
+	cachedReqs   map[string]*schema.Request
 }
 
 func NewAgent(
@@ -86,7 +86,7 @@ func NewAgent(
 		tools:       make(map[string]tool.Invoker),
 		contextMgr:  contextMgr,
 		skillLoader: skillLoader,
-
+		cachedReqs:  make(map[string]*schema.Request),
 		llm: llm,
 	}
 
@@ -145,235 +145,41 @@ type AskStreamResult struct {
 
 func (a *Agent) AskStream(ctx context.Context, msg *UserMessage) *AskStreamResult {
 	res := AskStreamResult{
-		Content:  make(chan *AskStreamResultContent),
-		ToolCall: make(chan *AskStreamResultToolCall),
+		Content:  make(chan *AskStreamResultContent, 16),
+		ToolCall: make(chan *AskStreamResultToolCall, 16),
 	}
 	go a.handleIncomingMessageStream(ctx, msg, &res)
 
 	return &res
 }
 
-func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) string {
-	curIter := 0
-	finalResult := ""
-	var lastResponse *llm.Response
-	a.contextMgr.InitSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
-	a.contextMgr.AppendUserMessage(inMsg)
-	for curIter <= maxIterAllowed {
-		curIter++
-
-		// build llm message request
-		llmReq := a.buildLLMMessageRequest(inMsg)
-
-		// call llm
-		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
-		if err != nil {
-			return fmt.Sprintf("(failed to call llm: %s)", err.Error())
-		}
-		lastResponse = llmResp
-
-		choice := llmResp.FirstChoice()
-		// append assitant messages
-		a.contextMgr.AppendAssistantMessage(inMsg, &choice.Message)
-
-		if choice.IsStopped() {
-			// finished
-			finalResult = choice.Message.Content
-			break
-		}
-
-		if choice.HasToolCalls() {
-			// TODO maybe in the future we need to handle tool calls concurrently
-			tcs := choice.Message.ToolCalls
-			for _, tc := range tcs {
-				a.handleToolCall(ctx, inMsg, &tc)
-			}
-		}
-	}
-
-	// if max iterations reached, and we still dont get a final result, use last response
-	if finalResult == "" && lastResponse != nil {
-		finalResult = fmt.Sprintf("(max iterations reached, last response: %s)", lastResponse.FirstChoice().Message.Content)
-	}
-
-	return finalResult
-}
-
-type toolCallAndResult struct {
-	tc     llmmodel.CompletionToolCall
-	result string
-}
-
-// handle streaming tool call
-//
-// This method will be called when one tool call response is completed.
-// Tool call will be invoked from another goroutine.
-func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) llm.StreamToolCallHandler {
-	dstTcsMu := sync.Mutex{}
-	return func(ctx context.Context, tc llmmodel.StreamChoiceDeltaToolCall) {
-		// invoke tool
-		result := a.getToolAndInvoke(ctx, &llmmodel.CompletionToolCall{
-			Id:       tc.Id,
-			Type:     tc.Type,
-			Function: tc.Function,
-		})
-
-		dstTcsMu.Lock()
-		defer dstTcsMu.Unlock()
-		*dstTcs = append(*dstTcs, &toolCallAndResult{
-			tc: llmmodel.CompletionToolCall{
-				Id:       tc.Id,
-				Type:     tc.Type,
-				Function: tc.Function,
-			},
-			result: result,
-		})
-	}
-}
-
-func (a *Agent) handleIncomingMessageStream(
-	ctx context.Context,
-	inMsg *UserMessage,
-	result *AskStreamResult,
-) {
-	curIter := 0
-	a.contextMgr.InitSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
-	a.contextMgr.AppendUserMessage(inMsg)
-
-	for curIter <= maxIterAllowed {
-		var (
-			wg                      sync.WaitGroup
-			contentBuilder          strings.Builder
-			reasoningContentBuilder strings.Builder
-			// we also need to accumulate tool calls from assistant to feed back to llm
-			dstTcs = make([]*toolCallAndResult, 0)
-		)
-
-		curIter++
-		llmReq := a.buildLLMMessageRequest(inMsg)
-		// call llm the stream way
-		llmRespCh := a.llm.ChatCompletionStream(ctx, llmReq)
-		streamPacked := llm.StreamResponseHandler(ctx,
-			llmRespCh, a.handleStreamingToolCall(&dstTcs))
-
-		wg.Go(func() {
-			for content := range streamPacked.Content {
-				result.Content <- &AskStreamResultContent{
-					Round:            curIter,
-					Content:          content.Content,
-					ReasoningContent: content.ReasoningContent,
-				}
-				contentBuilder.WriteString(content.Content)
-				reasoningContentBuilder.WriteString(content.ReasoningContent)
-			}
-		})
-
-		wg.Go(func() {
-			for toolCall := range streamPacked.ToolCall {
-				select {
-				case result.ToolCall <- &AskStreamResultToolCall{
-					Round:     curIter,
-					Name:      toolCall.Name,
-					Arguments: toolCall.ArgumentFragment,
-				}:
-				default:
-				}
-			}
-		})
-
-		wg.Wait()
-
-		assistantTcs := make([]llmmodel.CompletionToolCall, 0, len(dstTcs))
-		for _, tcr := range dstTcs {
-			assistantTcs = append(assistantTcs, tcr.tc)
-		}
-
-		// accumulate assistant message for this iteration
-		a.contextMgr.AppendAssistantMessage(inMsg, &llmmodel.CompletionMessage{
-			Content:          contentBuilder.String(),
-			ToolCalls:        assistantTcs,
-			ReasoningContent: reasoningContentBuilder.String(),
-		})
-
-		if len(dstTcs) == 0 {
-			// no tool calls, we are done
-			break
-		}
-
-		// add tool call results
-		for _, tcr := range dstTcs {
-			a.contextMgr.AppendToolResult(inMsg, &tcr.tc, tcr.result)
-		}
-	}
-
-	// close all
-	close(result.ToolCall)
-	close(result.Content)
-}
-
-func (a *Agent) handleToolCall(
-	ctx context.Context,
-	inMsg *UserMessage,
-	tc *llmmodel.CompletionToolCall,
-) {
-	toolResult := a.getToolAndInvoke(ctx, tc)
-	// feedback tool calling result to llm
-	a.contextMgr.AppendToolResult(inMsg, tc, toolResult)
-}
-
-func (a *Agent) getToolAndInvoke(ctx context.Context, tc *llmmodel.CompletionToolCall) string {
-	a.toolsMu.RLock()
-	tool, ok := a.tools[tc.Function.Name]
-	if !ok {
-		a.toolsMu.RUnlock()
-		return fmt.Sprintf("(tool %s not found)", tc.Function.Name)
-	}
-
-	a.toolsMu.RUnlock()
-
-	// execute tool
-	toolResult, err := tool.Invoke(ctx, tc.Function.Arguments)
+func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*schema.Request, error) {
+	msgList, err := a.contextMgr.GetMessageContext(msg.Channel, msg.ChatId)
 	if err != nil {
-		toolResult = err.Error()
+		return nil, err
 	}
-
-	return toolResult
-}
-
-func (a *Agent) buildLLMMessageRequest(_ *UserMessage) *llm.Request {
-	r := llm.NewRequest(a.c.Model, a.contextMgr.GetMessageList())
+	r := schema.NewRequest(a.c.Model, msgList)
 	r.Temperature = modelTemperature
 	r.MaxTokens = maxTokenAllowed
-	r.Thinking = llmmodel.EnableThinking()
+	r.Thinking = schema.EnableThinking()
 	r.Tools = a.buildLLMToolParams()
 
-	return r
+	a.cachedReqsMu.Lock()
+	defer a.cachedReqsMu.Unlock()
+	a.cachedReqs[msg.Channel+":"+msg.ChatId] = r
+
+	return r, nil
 }
 
-func (a *Agent) buildLLMToolParams() []llmmodel.ToolParam {
-	params := make([]llmmodel.ToolParam, 0, len(a.tools))
+func (a *Agent) buildLLMToolParams() []schema.ToolParam {
+	params := make([]schema.ToolParam, 0, len(a.tools))
 	for _, tool := range a.tools {
-		params = append(params, llmmodel.NewToolParamWithSchemaParam(
-			tool.Info().Name, tool.Info().Description, *tool.Info().Schema,
+		params = append(params, schema.NewToolParamWithSchemaParam(
+			tool.Info().Name,
+			tool.Info().Description,
+			*tool.Info().Schema,
 		))
 	}
 
 	return params
-}
-
-func (a *Agent) RetrieveSession(channel, chatId string) ([]agcontext.SessionLogItem, error) {
-	history, err := a.contextMgr.GetSessionLogHistory(channel, chatId)
-	if err != nil {
-		return nil, err
-	}
-
-	return history, nil
-}
-
-func (a *Agent) AvailableSkills() []*skill.Skill {
-	return a.skillLoader.Skills()
-}
-
-func (a *Agent) GetSystemPrompt() string {
-	return a.contextMgr.GetSystemPrompt()
 }

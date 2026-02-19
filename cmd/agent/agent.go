@@ -105,18 +105,17 @@ func runAgent(ctx context.Context, args []string) error {
 		return err
 	}
 
-	fmt.Println("Session: ", agentChatId)
-
 	mod := initAgentModel(ctx, ag, history)
 	pg := tea.NewProgram(&mod,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion())
+		tea.WithMouseCellMotion(),
+	)
 	mod.setPg(pg)
 	if _, err := pg.Run(); err != nil {
 		return err
 	}
 
-	fmt.Printf("\nUse %s to resume conversation\n", agentChatId)
+	fmt.Printf("\nBye, Use %s to resume conversation\n", agentChatId)
 
 	return nil
 }

@@ -83,6 +83,9 @@ type (
 		err error
 
 		curRound int
+
+		curTokensViewport viewport.Model
+		curTokens         int64
 	}
 
 	contentMsg struct {
@@ -127,6 +130,11 @@ func initAgentModel(
 	msgVp.KeyMap = viewport.KeyMap{}
 	tcVp := viewport.New(80, 5)
 
+	tokensVp := viewport.New(80, 1)
+	tokensVp.MouseWheelEnabled = true
+	tokensVp.KeyMap = viewport.KeyMap{}
+	tokens := ag.GetCurrentContextTokens(chmodel.ChannelCLI.String(), agentChatId)
+
 	return agentModel{
 		ctx:                ctx,
 		ag:                 ag,
@@ -136,6 +144,8 @@ func initAgentModel(
 		toolCallingSpinner: sp,
 		msgs:               initMsgs,
 		curRound:           -1,
+		curTokensViewport:  tokensVp,
+		curTokens:          tokens,
 	}
 }
 
@@ -145,14 +155,19 @@ func (m agentModel) Init() tea.Cmd {
 
 func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
-		taCmd tea.Cmd
-		spCmd tea.Cmd
-		vpCmd tea.Cmd
+		taCmd     tea.Cmd
+		spCmd     tea.Cmd
+		vpCmd     tea.Cmd
+		tokensCmd tea.Cmd
 	)
 
 	m.inputTextarea, taCmd = m.inputTextarea.Update(msg)
 	m.msgViewport, vpCmd = m.msgViewport.Update(msg)
 	m.toolCallingSpinner, spCmd = m.toolCallingSpinner.Update(msg)
+	m.curTokensViewport, tokensCmd = m.curTokensViewport.Update(msg)
+
+	m.curTokensViewport.SetContent(fmt.Sprintf("Tokens: %d", m.curTokens))
+	m.curTokensViewport.GotoBottom()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -193,7 +208,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inputTextarea.Reset()
 			m.updateMsgViewport()
 
-			return m, tea.Batch(taCmd, vpCmd, spCmd)
+			return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd)
 		}
 
 	case contentMsg:
@@ -219,7 +234,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateMsgViewport()
 
 		// add to the last msg
-		return m, tea.Batch(taCmd, vpCmd, spCmd)
+		return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd)
 
 	case toolCallMsg:
 		if msg.name == "" {
@@ -231,6 +246,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.curToolCall = newToolCall
 		}
+
 		m.updateMsgViewport()
 		m.toolCallViewport.GotoBottom()
 		m.msgViewport.GotoBottom()
@@ -243,7 +259,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	return m, tea.Batch(taCmd, vpCmd, spCmd)
+	return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd)
 }
 
 func renderUserMsg(content string) string {
@@ -306,7 +322,11 @@ func (m agentModel) View() string {
 			m.inputTextarea.View())
 	}
 
-	return fmt.Sprintf("%s\n\n%s", m.msgViewport.View(), m.inputTextarea.View())
+	return fmt.Sprintf("%s\n\n%s\n%s",
+		m.msgViewport.View(),
+		m.inputTextarea.View(),
+		m.curTokensViewport.View(),
+	)
 }
 
 func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {

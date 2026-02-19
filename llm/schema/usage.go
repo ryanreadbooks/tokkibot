@@ -1,4 +1,4 @@
-package model
+package schema
 
 type CompletionUsage struct {
 	CompletionTokens int64

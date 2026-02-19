@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/ryanreadbooks/tokkibot/llm"
-	"github.com/ryanreadbooks/tokkibot/llm/openai"
+	"github.com/ryanreadbooks/tokkibot/llm/factory/openai"
 )
 
 const (
