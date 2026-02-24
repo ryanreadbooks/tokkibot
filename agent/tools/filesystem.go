@@ -188,19 +188,27 @@ func EditFile(allowDirs []string) tool.Invoker {
 			return "", fmt.Errorf("failed to read file %s: %w", cleanPath, err)
 		}
 
-		contentStr := string(content)
-		if input.ReplaceAll {
-			contentStr = strings.ReplaceAll(contentStr, input.OldString, input.NewString)
-		} else {
-			contentStr = strings.Replace(contentStr, input.OldString, input.NewString, 1)
-		}
+	contentStr := string(content)
+	if input.ReplaceAll {
+		contentStr = strings.ReplaceAll(contentStr, input.OldString, input.NewString)
+	} else {
+		contentStr = strings.Replace(contentStr, input.OldString, input.NewString, 1)
+	}
 
-		_, err = f.WriteString(contentStr)
-		if err != nil {
-			return "", fmt.Errorf("failed to write file %s: %w", cleanPath, err)
-		}
+	// Seek to beginning and truncate file before writing
+	if _, err = f.Seek(0, 0); err != nil {
+		return "", fmt.Errorf("failed to seek file %s: %w", cleanPath, err)
+	}
+	if err = f.Truncate(0); err != nil {
+		return "", fmt.Errorf("failed to truncate file %s: %w", cleanPath, err)
+	}
 
-		return fmt.Sprintf("File %s edited successfully", cleanPath), nil
+	_, err = f.WriteString(contentStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to write file %s: %w", cleanPath, err)
+	}
+
+	return fmt.Sprintf("File %s edited successfully", cleanPath), nil
 	})
 }
 

@@ -1,60 +1,45 @@
 package session
 
 import (
-	"encoding/json"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
-	"time"
 
-	// "time"
-
+	"github.com/ryanreadbooks/tokkibot/agent/ref"
 	"github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
 // this is the log file for LLM context building
 type ContextLog struct {
-	workspace string
-	// log filename
-	filename string
-
-	f *os.File
-
-	channel, chatId string
+	baseLog
 
 	mu sync.RWMutex
-	// full log messages
+	// full log messages in memory
 	logs []LogItem
 }
 
-func (s *ContextLog) closeFile() {
-	if s.f != nil {
-		_ = s.f.Close()
-	}
-}
-
-func (s *ContextLog) flush(root string) error {
+// Flush writes all in-memory logs to disk
+func (s *ContextLog) Flush(root string) error {
 	// save all
-	path := s.fullLogFileName(root)
-	err := os.MkdirAll(filepath.Dir(path), 0755)
-	if err != nil {
+	path := s.baseLog.fullLogFileName(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 
 	if s.f != nil {
-		s.f.Truncate(0)
+		if err := s.f.Truncate(0); err != nil {
+			return err
+		}
+
 		s.mu.RLock()
 		snapshot := slices.Clone(s.logs)
 		s.mu.RUnlock()
 
 		for _, msg := range snapshot {
 			if content := msg.Json(); len(content) > 0 {
-				_, err = s.f.WriteString(content + "\n") // ignore error here
-				if err != nil {
-					slog.Error("[session] failed to write session file", "error", err)
+				if _, err := s.f.WriteString(content + "\n"); err != nil {
 					return err
 				}
 			}
@@ -64,56 +49,28 @@ func (s *ContextLog) flush(root string) error {
 	return nil
 }
 
-func (s *ContextLog) logFileName() []string {
-	return []string{s.channel, s.chatId, s.filename}
-}
-
-// ~/sessions/channel/chatid/log.context.jsonl
-func (s *ContextLog) fullLogFileName(root string) string {
-	elems := []string{root}
-	elems = append(elems, s.logFileName()...)
-
-	return filepath.Join(elems...)
-}
-
 func (s *ContextLog) AddUserMessage(msg *schema.MessageParam) error {
-	item := LogItem{
-		Id:      newLogItemId(),
-		Role:    schema.RoleUser,
-		Created: time.Now().Unix(),
-		Message: msg,
-	}
-
+	item := s.createLogItem(schema.RoleUser, msg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logs = append(s.logs, item)
-	return s.writeLine(&item)
+	return s.baseLog.writeLine(&item)
 }
 
 func (s *ContextLog) AddAssistantMessage(msg *schema.MessageParam) error {
-	item := LogItem{
-		Id:      newLogItemId(),
-		Role:    schema.RoleAssistant,
-		Created: time.Now().Unix(),
-		Message: msg,
-	}
+	item := s.createLogItem(schema.RoleAssistant, msg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logs = append(s.logs, item)
-	return s.writeLine(&item)
+	return s.baseLog.writeLine(&item)
 }
 
 func (s *ContextLog) AddToolMessage(msg *schema.MessageParam) error {
-	item := LogItem{
-		Id:      newLogItemId(),
-		Role:    schema.RoleTool,
-		Created: time.Now().Unix(),
-		Message: msg,
-	}
+	item := s.createLogItem(schema.RoleTool, msg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logs = append(s.logs, item)
-	return s.writeLine(&item)
+	return s.baseLog.writeLine(&item)
 }
 
 // get full logs item
@@ -124,89 +81,123 @@ func (s *ContextLog) GetLogs() []LogItem {
 	return s.logs
 }
 
-// override
+// ResetLogsFromParam resets the in-memory logs with new params
 func (s *ContextLog) ResetLogsFromParam(params []schema.MessageParam) {
 	s.mu.Lock()
-	defer s.mu.RUnlock()
+	defer s.mu.Unlock()
 
 	newLogs := make([]LogItem, 0, len(params))
 	for _, p := range params {
-		newLogs = append(newLogs, LogItem{
-			Id:      newLogItemId(),
-			Created: time.Now().Unix(),
-			Role:    p.Role(),
-			Message: &p,
-		})
+		msg := p
+		newLogs = append(newLogs, s.baseLog.createLogItem(p.Role(), &msg))
 	}
 
 	s.logs = newLogs
 }
 
-func (s *ContextLog) writeLine(item *LogItem) error {
-	str, err := json.Marshal(item)
-	if err == nil && s.f != nil {
-		str = append(str, '\n')
-		_, err = s.f.Write(str)
-	}
-
-	return err
-}
-
 // loadExistingLogs loads existing log items from file into memory
 func (s *ContextLog) loadExistingLogs(path string) error {
-	file, err := os.Open(path)
+	items, err := readLogItems(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+		return err
+	}
+
+	if len(items) > 0 {
+		s.mu.Lock()
+		s.logs = items
+		s.mu.Unlock()
+	}
+
+	return nil
+}
+
+// isAlreadyRef checks if content is already a ref reference
+func isAlreadyRef(content string) bool {
+	// Check if content starts with @refs/ and is relatively short (likely a ref)
+	if strings.HasPrefix(content, ref.Prefix) {
+		// If it contains the hint text, it's definitely a ref
+		if strings.Contains(content, "(use load_ref tool to read full content)") {
+			return true
 		}
-		return err
+		// If it starts with @refs/ and is short (< 100 chars), likely a ref
+		if len(content) < 100 {
+			return true
+		}
 	}
-	defer file.Close()
+	return false
+}
 
-	stat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	if stat.Size() == 0 {
-		return nil
-	}
-
+// CompressToolCalls compresses the first N tool call messages to ref references
+// Returns (compressed count, error)
+func (s *ContextLog) CompressToolCalls(count int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	decoder := json.NewDecoder(file)
-	for {
-		var item LogItem
-		if err := decoder.Decode(&item); err == io.EOF {
+	compressed := 0
+	for i := range s.logs {
+		if compressed >= count {
 			break
-		} else if err != nil {
-			slog.Warn("[session] failed to decode log item, skipping", "error", err)
-			continue
 		}
-		s.logs = append(s.logs, item)
+
+		if s.logs[i].Role == schema.RoleTool {
+			if s.logs[i].Message != nil && s.logs[i].Message.ToolMessageParam != nil {
+				toolMsg := s.logs[i].Message.ToolMessageParam
+				originalContent := toolMsg.GetContent()
+
+				// Skip if already a ref or content is too short
+				if isAlreadyRef(originalContent) {
+					continue
+				}
+
+				// Only compress if content is long enough
+				if len(originalContent) > 500 {
+					// Save to ref file
+					refName, err := ref.Save(originalContent)
+					if err != nil {
+						continue
+					}
+
+					// Update message to use ref
+					toolMsg.String = &schema.StringParam{
+						Value: refName + " (use load_ref tool to read full content)",
+					}
+					toolMsg.Texts = nil
+					compressed++
+				}
+			}
+		}
 	}
 
-	return nil
+	return compressed, nil
+}
+
+// GetUncompressedToolCallCount returns the count of tool calls that can be compressed
+func (s *ContextLog) GetUncompressedToolCallCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for i := range s.logs {
+		if s.logs[i].Role == schema.RoleTool {
+			if s.logs[i].Message != nil && s.logs[i].Message.ToolMessageParam != nil {
+				content := s.logs[i].Message.ToolMessageParam.GetContent()
+				// Count messages > 500 chars that are not already refs
+				if len(content) > 500 && !isAlreadyRef(content) {
+					count++
+				}
+			}
+		}
+	}
+	return count
 }
 
 func (s *ContextLog) initFile(workspace string) error {
-	path := s.fullLogFileName(workspace)
-	err := os.MkdirAll(filepath.Dir(path), 0755)
-	if err != nil {
+	// ContextLog uses O_APPEND for appending, but also supports flushing
+	if err := s.baseLog.initFile(workspace, os.O_CREATE|os.O_RDWR|os.O_APPEND); err != nil {
 		return err
 	}
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-
-	s.f = f
 
 	// Load existing logs from file if any
-	if err := s.loadExistingLogs(path); err != nil {
-		return err
-	}
-
-	return nil
+	path := s.baseLog.fullLogFileName(workspace)
+	return s.loadExistingLogs(path)
 }

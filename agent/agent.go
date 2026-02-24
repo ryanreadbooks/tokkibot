@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	_ "embed"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -16,6 +18,9 @@ import (
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
+//go:embed summary_prompt.md
+var summaryPrompt string
+
 type UserMessage = agcontext.UserInput
 
 const (
@@ -23,6 +28,16 @@ const (
 
 	modelTemperature = 1.0
 	maxTokenAllowed  = 25000
+
+	// Context window management
+	contextWindowLimit           = 100000 // Total context window limit
+	contextCompactThresholdPct   = 0.70   // Trigger compaction at 85% of limit
+	contextSummarizeThresholdPct = 0.60   // Trigger summarization at 65% of limit
+	toolCallCompressCount        = 30     // Number of tool calls to compress into refs
+
+	// Calculated thresholds
+	contextCompactThreshold   = int64(float64(contextWindowLimit) * contextCompactThresholdPct)
+	contextSummarizeThreshold = int64(float64(contextWindowLimit) * contextSummarizeThresholdPct)
 )
 
 type AgentConfig struct {
@@ -87,7 +102,7 @@ func NewAgent(
 		contextMgr:  contextMgr,
 		skillLoader: skillLoader,
 		cachedReqs:  make(map[string]*schema.Request),
-		llm: llm,
+		llm:         llm,
 	}
 
 	agent.registerTools()
@@ -154,6 +169,11 @@ func (a *Agent) AskStream(ctx context.Context, msg *UserMessage) *AskStreamResul
 }
 
 func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*schema.Request, error) {
+	// Check context size and compact if needed
+	if err := a.checkAndCompactContext(ctx, msg); err != nil {
+		return nil, fmt.Errorf("failed to compact context: %w", err)
+	}
+
 	msgList, err := a.contextMgr.GetMessageContext(msg.Channel, msg.ChatId)
 	if err != nil {
 		return nil, err
@@ -169,6 +189,55 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 	a.cachedReqs[msg.Channel+":"+msg.ChatId] = r
 
 	return r, nil
+}
+
+// checkAndCompactContext checks current context size and applies compression if needed
+func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) error {
+	currentTokens := a.GetCurrentContextTokens(msg.Channel, msg.ChatId)
+
+	if currentTokens < contextCompactThreshold {
+		return nil
+	}
+
+	// Step 1: Try compressing tool calls to refs
+	compressed, err := a.contextMgr.CompressToolCalls(msg.Channel, msg.ChatId, toolCallCompressCount)
+	if err != nil {
+		return fmt.Errorf("failed to compress tool calls: %w", err)
+	}
+
+	if compressed > 0 {
+		currentTokens = a.GetCurrentContextTokens(msg.Channel, msg.ChatId)
+	}
+
+	// Step 2: If over 80% threshold after compression, summarize history
+	if currentTokens >= contextSummarizeThreshold {
+		err = a.contextMgr.SummarizeHistory(ctx, msg.Channel, msg.ChatId, a.summarizeMessagesWithLLM)
+		if err != nil {
+			return fmt.Errorf("failed to summarize history: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// summarizeMessagesWithLLM uses LLM to create a summary of conversation messages
+func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []schema.MessageParam) (string, error) {
+	summaryMsg := []schema.MessageParam{
+		schema.NewSystemMessageParam(summaryPrompt),
+		schema.NewUserMessageParam("Please summarize the conversation history above:"),
+	}
+	summaryMsg = append(summaryMsg, messages...)
+
+	req := schema.NewRequest(a.c.Model, summaryMsg)
+	req.Temperature = modelTemperature
+	req.MaxTokens = 2000
+
+	resp, err := a.llm.ChatCompletion(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	return resp.FirstChoice().Message.Content, nil
 }
 
 func (a *Agent) buildLLMToolParams() []schema.ToolParam {

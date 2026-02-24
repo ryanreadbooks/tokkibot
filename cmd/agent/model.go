@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/agent"
+	"github.com/ryanreadbooks/tokkibot/agent/tools"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -28,17 +29,27 @@ var (
 
 	userStyle = lipgloss.NewStyle().Foreground(
 		userStyleColor).
-		Bold(true).BorderLeft(true)
+		Bold(true)
 	userMsgStyle = lipgloss.NewStyle().Foreground(
 		userStyleColor).AlignHorizontal(lipgloss.Left)
+	userBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true, true, true, true).
+		BorderForeground(lipgloss.Color("#937dd8")).
+		Padding(0, 1).
+		MarginBottom(1)
 
 	assistantStyle = lipgloss.NewStyle().Foreground(
-		assistantStyleColor).Bold(true).BorderLeft(true)
+		assistantStyleColor).Bold(true)
 	assistantMsgStyle = lipgloss.NewStyle().Foreground(
 		assistantStyleColor).AlignHorizontal(lipgloss.Left)
+	assistantBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true, true, true, true).
+		BorderForeground(lipgloss.Color("#0f8b56")).
+		Padding(0, 1).
+		MarginBottom(1)
 
 	assistantThinkingStyle = lipgloss.NewStyle().Foreground(
-		assistantThinkingStyleColor).Bold(true).BorderLeft(true)
+		assistantThinkingStyleColor).Bold(true)
 	assistantThinkingMsgStyle = lipgloss.NewStyle().Foreground(
 		assistantThinkingStyleColor).AlignHorizontal(lipgloss.Left)
 
@@ -48,6 +59,10 @@ var (
 
 	toolCallArgsStyle = lipgloss.NewStyle().Foreground(
 		lipgloss.Color("#5e5e5e"),
+	)
+
+	tokensStyle = lipgloss.NewStyle().Foreground(
+		lipgloss.Color("#808080"),
 	)
 )
 
@@ -62,6 +77,11 @@ type (
 	uiMsg struct {
 		role    string       // user or assistant
 		content uiMsgContent // for user and assistant
+	}
+
+	shellConfirmRequest struct {
+		command string
+		respCh  chan bool
 	}
 
 	agentModel struct {
@@ -86,6 +106,9 @@ type (
 
 		curTokensViewport viewport.Model
 		curTokens         int64
+		
+		// Shell confirmation
+		shellConfirmPending *shellConfirmRequest
 	}
 
 	contentMsg struct {
@@ -101,6 +124,10 @@ type (
 	}
 
 	clearRoundMsg int
+
+	updateTokensMsg struct{}
+	
+	shellConfirmMsg shellConfirmRequest
 )
 
 const (
@@ -127,15 +154,19 @@ func initAgentModel(
 
 	msgVp := viewport.New(80, 20)
 	msgVp.MouseWheelEnabled = true
-	msgVp.KeyMap = viewport.KeyMap{}
-	tcVp := viewport.New(80, 5)
+	msgVp.KeyMap = viewport.DefaultKeyMap()
+	
+	tcVp := viewport.New(80, 8)
+	tcVp.MouseWheelEnabled = true
+	tcVp.KeyMap = viewport.DefaultKeyMap()
 
 	tokensVp := viewport.New(80, 1)
-	tokensVp.MouseWheelEnabled = true
+	tokensVp.MouseWheelEnabled = false
 	tokensVp.KeyMap = viewport.KeyMap{}
 	tokens := ag.GetCurrentContextTokens(chmodel.ChannelCLI.String(), agentChatId)
+	tokensVp.SetContent(tokensStyle.Render(fmt.Sprintf("Tokens: %d", tokens)))
 
-	return agentModel{
+	mod := agentModel{
 		ctx:                ctx,
 		ag:                 ag,
 		inputTextarea:      ta,
@@ -147,6 +178,23 @@ func initAgentModel(
 		curTokensViewport:  tokensVp,
 		curTokens:          tokens,
 	}
+	
+	return mod
+}
+
+// ConfirmCommand implements ShellConfirmer interface
+func (m *agentModel) ConfirmCommand(command string) (bool, error) {
+	respCh := make(chan bool, 1)
+	
+	// Send confirmation request to UI
+	m.pg.Send(shellConfirmMsg{
+		command: command,
+		respCh:  respCh,
+	})
+	
+	// Wait for user response
+	confirmed := <-respCh
+	return confirmed, nil
 }
 
 func (m agentModel) Init() tea.Cmd {
@@ -165,15 +213,16 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.msgViewport, vpCmd = m.msgViewport.Update(msg)
 	m.toolCallingSpinner, spCmd = m.toolCallingSpinner.Update(msg)
 	m.curTokensViewport, tokensCmd = m.curTokensViewport.Update(msg)
-
-	m.curTokensViewport.SetContent(fmt.Sprintf("Tokens: %d", m.curTokens))
-	m.curTokensViewport.GotoBottom()
+	
+	var tcVpCmd tea.Cmd
+	m.toolCallViewport, tcVpCmd = m.toolCallViewport.Update(msg)
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.msgViewport.Width = msg.Width
+		m.toolCallViewport.Width = msg.Width
 		if m.curToolCall.name != "" {
-			m.toolCallViewport.Height = 3
+			m.toolCallViewport.Height = 8
 			m.msgViewport.Height = msg.Height - textAreaHeight*3 - m.toolCallViewport.Height
 		} else {
 			m.msgViewport.Height = msg.Height - textAreaHeight*3
@@ -182,6 +231,32 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateMsgViewport()
 
 	case tea.KeyMsg:
+		// Handle shell confirmation if pending
+		if m.shellConfirmPending != nil {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				// Cancel confirmation
+				m.shellConfirmPending.respCh <- false
+				close(m.shellConfirmPending.respCh)
+				m.shellConfirmPending = nil
+				return m, nil
+			case tea.KeyEnter:
+				// Accept confirmation
+				m.shellConfirmPending.respCh <- true
+				close(m.shellConfirmPending.respCh)
+				m.shellConfirmPending = nil
+				return m, nil
+			case tea.KeyEsc:
+				// Reject confirmation
+				m.shellConfirmPending.respCh <- false
+				close(m.shellConfirmPending.respCh)
+				m.shellConfirmPending = nil
+				return m, nil
+			}
+			// Ignore other keys during confirmation
+			return m, nil
+		}
+		
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -197,7 +272,7 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// add assistant placeholder
 			m.msgs = append(m.msgs, uiMsg{role: roleAssistant})
 
-			// invoke agent loop
+			// Invoke agent loop
 			stream := m.ag.AskStream(m.ctx, &agent.UserMessage{
 				Channel: chmodel.ChannelCLI.String(),
 				ChatId:  agentChatId,
@@ -207,6 +282,12 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.consumeChans(stream)
 			m.inputTextarea.Reset()
 			m.updateMsgViewport()
+			
+			// Update tokens after user input
+			go func() {
+				time.Sleep(100 * time.Millisecond) // Wait for message to be appended
+				m.pg.Send(updateTokensMsg{})
+			}()
 
 			return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd)
 		}
@@ -248,30 +329,63 @@ func (m agentModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.updateMsgViewport()
-		m.toolCallViewport.GotoBottom()
+		m.updateToolCallViewport()
 		m.msgViewport.GotoBottom()
+		return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd, tcVpCmd)
 
 	case clearRoundMsg:
 		m.curRound = int(msg)
+
+	case updateTokensMsg:
+		// Refresh token count from agent
+		newTokens := m.ag.GetCurrentContextTokens(chmodel.ChannelCLI.String(), agentChatId)
+		if newTokens != m.curTokens {
+			m.curTokens = newTokens
+			m.updateTokensViewport()
+		}
+
+	case shellConfirmMsg:
+		// Store pending confirmation request
+		m.shellConfirmPending = &shellConfirmRequest{
+			command: msg.command,
+			respCh:  msg.respCh,
+		}
+		return m, nil
 
 	case errMsg:
 		m.err = msg
 		return m, nil
 	}
 
-	return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd)
+	return m, tea.Batch(taCmd, vpCmd, spCmd, tokensCmd, tcVpCmd)
 }
 
-func renderUserMsg(content string) string {
-	return userStyle.Render("You: ") + userMsgStyle.Render(content) + "\n"
+func (m agentModel) renderUserMsg(content string) string {
+	header := userStyle.Render("You:")
+	body := userMsgStyle.Render(content)
+	boxWidth := m.msgViewport.Width - 4 // Account for padding and border
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+	box := userBoxStyle.Width(boxWidth).Render(header + "\n" + body)
+	return box + "\n"
 }
 
-func renderAssistantThinkingMsg(content string) string {
-	return assistantThinkingStyle.Render("Thinking: ") + assistantThinkingMsgStyle.Render(content) + "\n"
+func (m agentModel) renderAssistantThinkingMsg(content string) string {
+	header := assistantThinkingStyle.Render("Thinking:")
+	body := assistantThinkingMsgStyle.Render(content)
+	return header + "\n" + body + "\n"
 }
 
-func renderAssistantMsg(content string) string {
-	return assistantStyle.Render("Assistant: ") + assistantMsgStyle.Render(content) + "\n"
+func (m agentModel) renderAssistantMsg(content string) string {
+	header := assistantStyle.Render("Assistant:")
+	body := assistantMsgStyle.Render(content)
+	boxWidth := m.msgViewport.Width - 4 // Account for padding and border
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+	box := assistantBoxStyle.Width(boxWidth).Render(header + "\n" + body)
+	return box + "\n"
 }
 
 func (m agentModel) renderUiMsgs() string {
@@ -283,14 +397,14 @@ func (m agentModel) renderUiMsgs() string {
 	for _, msg := range m.msgs {
 		switch msg.role {
 		case roleUser:
-			sb.WriteString(renderUserMsg(msg.content.content))
+			sb.WriteString(m.renderUserMsg(msg.content.content))
 		case roleAssistant:
 			// add content
 			if msg.content.reasoningContent != "" {
-				sb.WriteString(renderAssistantThinkingMsg(msg.content.reasoningContent))
+				sb.WriteString(m.renderAssistantThinkingMsg(msg.content.reasoningContent))
 			}
 			if msg.content.content != "" {
-				sb.WriteString(renderAssistantMsg(msg.content.content))
+				sb.WriteString(m.renderAssistantMsg(msg.content.content))
 			}
 		}
 	}
@@ -304,17 +418,46 @@ func (m *agentModel) updateMsgViewport() {
 	m.msgViewport.GotoBottom()
 }
 
+func (m *agentModel) updateTokensViewport() {
+	tokenText := tokensStyle.Render(fmt.Sprintf("Tokens: %d", m.curTokens))
+	m.curTokensViewport.SetContent(tokenText)
+	m.curTokensViewport.GotoBottom()
+}
+
+func (m *agentModel) updateToolCallViewport() {
+	if m.curToolCall.name != "" {
+		content := toolCallStyle.Render("Tool calling "+m.curToolCall.name+" ") +
+			m.toolCallingSpinner.View() + "\n" +
+			toolCallArgsStyle.Render(m.curToolCall.arguments)
+		m.toolCallViewport.SetContent(content)
+		m.toolCallViewport.GotoBottom()
+	}
+}
+
 func (m *agentModel) renderToolCall() string {
 	if m.curToolCall.name != "" {
-		return toolCallStyle.Render("Tool calling "+m.curToolCall.name+" ") +
-			m.toolCallingSpinner.View() + "\n" +
-			toolCallArgsStyle.Render(m.curToolCall.arguments) + "\n"
+		return m.toolCallViewport.View()
 	}
-
 	return ""
 }
 
 func (m agentModel) View() string {
+	// Show confirmation dialog if pending
+	if m.shellConfirmPending != nil {
+		confirmStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#ff6b6b")).
+			Padding(1, 2).
+			Width(m.msgViewport.Width - 4)
+		
+		confirmText := fmt.Sprintf("⚠️  Dangerous Command Detected\n\n%s\n\n[Enter] Accept  [Esc] Reject  [Ctrl+C] Cancel",
+			m.shellConfirmPending.command)
+		
+		return fmt.Sprintf("%s\n\n%s",
+			m.msgViewport.View(),
+			confirmStyle.Render(confirmText))
+	}
+	
 	if m.curToolCall.name != "" {
 		return fmt.Sprintf("%s\n\n%s%s",
 			m.msgViewport.View(),
@@ -339,11 +482,13 @@ func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 			})
 		}
 
-		// finish and clear round
+		// Finish and clear round
 		m.pg.Send(clearRoundMsg(-1))
+		// Update tokens after conversation completes
+		m.pg.Send(updateTokensMsg{})
 	}()
 
-	// tool calling
+	// Tool calling
 	go func() {
 		for tc := range stream.ToolCall {
 			m.pg.Send(toolCallMsg{
@@ -353,7 +498,7 @@ func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 			})
 		}
 
-		// before exit we need to dismiss tool call display
+		// Before exit we need to dismiss tool call display
 		m.pg.Send(toolCallMsg{})
 	}()
 
@@ -362,4 +507,9 @@ func (m *agentModel) consumeChans(stream *agent.AskStreamResult) tea.Model {
 
 func (m *agentModel) setPg(pg *tea.Program) {
 	m.pg = pg
+}
+
+func (m *agentModel) injectShellConfirmer() {
+	// Inject confirmer into context
+	m.ctx = tools.WithShellConfirmer(m.ctx, m)
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent/context/session"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/llm/estimator"
+	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
 func (a *Agent) RetrieveMessageHistory(channel, chatId string) (
@@ -43,19 +44,19 @@ func (a *Agent) GetCurrentContextTokens(channel, chatId string) int64 {
 
 		return int64(tokens)
 	}
-
 	a.cachedReqsMu.RUnlock()
 
-	fakeReq, err := a.buildLLMMessageRequest(a.c.RootCtx, &UserMessage{
-		Channel: channel,
-		ChatId:  chatId,
-		Content: "",
-	})
+	// If no cached request, build a minimal request without triggering compaction
+	msgList, err := a.contextMgr.GetMessageContext(channel, chatId)
 	if err != nil {
 		return 0
 	}
 
-	tokens, err := estimator.RoughEstimator{}.Estimate(a.c.RootCtx, fakeReq)
+	// Create a temporary request for estimation only (without calling buildLLMMessageRequest)
+	fakeReq := schema.NewRequest(a.c.Model, msgList)
+	fakeReq.Tools = a.buildLLMToolParams()
+
+	tokens, err := est.Estimate(a.c.RootCtx, fakeReq)
 	if err != nil {
 		return 0
 	}

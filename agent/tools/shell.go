@@ -9,7 +9,7 @@ import (
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/pkg/bash"
-	"github.com/ryanreadbooks/tokkibot/pkg/os"
+	pkgos "github.com/ryanreadbooks/tokkibot/pkg/os"
 )
 
 const (
@@ -20,11 +20,20 @@ const (
 type shellResultTag string
 
 const (
-	shellBlockedTag shellResultTag = "<shell_blocked>"
-	shellRunErrTag  shellResultTag = "<shell_run_error>"
+	shellBlockedTag        shellResultTag = "<shell_blocked>"
+	shellRunErrTag         shellResultTag = "<shell_run_error>"
+	shellConfirmNeededTag  shellResultTag = "<shell_confirm_needed>"
 )
 
-var errDangerousCommand = errors.New("dangerous command blocked")
+var (
+	errDangerousCommand = errors.New("dangerous command blocked")
+	errConfirmNeeded    = errors.New("command requires user confirmation")
+)
+
+// ConfirmationRequiredError indicates a command needs user confirmation
+type ConfirmationRequiredError struct {
+	Command string
+}
 
 func wrapShellError(err error, errTag shellResultTag) error {
 	return fmt.Errorf("%s%w%s", errTag, err, errTag)
@@ -36,14 +45,49 @@ type ShellInput struct {
 	WorkingDir string `json:"working_dir,omitempty" jsonschema:"description=The working directory to execute the command in"`
 }
 
-// check if the shell command is safe to execute
-func safeCheckShellCommand(command string) error {
-	for _, p := range dangerousPatterns {
+// checkCommandNeedsConfirmation checks if command requires user confirmation
+func checkCommandNeedsConfirmation(command string) bool {
+	for _, p := range confirmRequiredPatterns {
 		if p.MatchString(command) {
-			return errDangerousCommand
+			return true
 		}
 	}
-	return nil
+	return false
+}
+
+// checkCommandBlocked checks if command is completely blocked
+func checkCommandBlocked(command string) bool {
+	for _, p := range dangerousPatterns {
+		if p.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ConfirmationRequiredError) Error() string {
+	return fmt.Sprintf("Command '%s' requires user confirmation. Please confirm to proceed.", e.Command)
+}
+
+// ShellConfirmer is an interface for confirming shell commands
+type ShellConfirmer interface {
+	ConfirmCommand(command string) (bool, error)
+}
+
+// contextKey type for context values
+type contextKey string
+
+const shellConfirmerKey contextKey = "shell_confirmer"
+
+// WithShellConfirmer adds a shell confirmer to context
+func WithShellConfirmer(ctx context.Context, confirmer ShellConfirmer) context.Context {
+	return context.WithValue(ctx, shellConfirmerKey, confirmer)
+}
+
+// GetShellConfirmer retrieves shell confirmer from context
+func GetShellConfirmer(ctx context.Context) (ShellConfirmer, bool) {
+	confirmer, ok := ctx.Value(shellConfirmerKey).(ShellConfirmer)
+	return confirmer, ok
 }
 
 // Tool to execute a command under the optional given working directory.
@@ -52,12 +96,30 @@ func Shell() tool.Invoker {
 		Name: "shell",
 		Description: fmt.Sprintf(
 			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided.",
-			os.GetSystemDistro(),
+			pkgos.GetSystemDistro(),
 		),
 	}, func(ctx context.Context, input *ShellInput) (string, error) {
-		err := safeCheckShellCommand(input.Command)
-		if err != nil {
-			return "", wrapShellError(err, shellBlockedTag)
+		// Check if command is completely blocked
+		if checkCommandBlocked(input.Command) {
+			return "", wrapShellError(errDangerousCommand, shellBlockedTag)
+		}
+		
+		// Check if command needs user confirmation
+		if checkCommandNeedsConfirmation(input.Command) {
+			// Try to get confirmer from context
+			confirmer, ok := GetShellConfirmer(ctx)
+			if !ok {
+				// No confirmer available, return error requesting confirmation
+				return "", wrapShellError(&ConfirmationRequiredError{Command: input.Command}, shellConfirmNeededTag)
+			}
+			
+			confirmed, err := confirmer.ConfirmCommand(input.Command)
+			if err != nil {
+				return "", wrapShellError(fmt.Errorf("confirmation failed: %w", err), shellBlockedTag)
+			}
+			if !confirmed {
+				return "", wrapShellError(errors.New("command execution denied by user"), shellBlockedTag)
+			}
 		}
 
 		name, args := bash.ParseCommand(input.Command)

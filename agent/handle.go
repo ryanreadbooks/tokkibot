@@ -9,26 +9,25 @@ import (
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
-func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) string {
-	curIter := 0
-	finalResult := ""
-	var lastResponse *schema.Response
-	a.contextMgr.InitFromSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
+// initMessageContext initializes session logs and appends the user message
+func (a *Agent) initMessageContext(ctx context.Context, inMsg *UserMessage) error {
+	a.contextMgr.InitFromSessionLogs(inMsg.Channel, inMsg.ChatId)
 	_, err := a.contextMgr.AppendUserMessage(inMsg)
-	if err != nil {
+	return err
+}
+
+func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) string {
+	if err := a.initMessageContext(ctx, inMsg); err != nil {
 		return err.Error()
 	}
 
-	for curIter <= maxIterAllowed {
-		curIter++
-
-		// build llm message request
+	var lastResponse *schema.Response
+	for curIter := 1; curIter <= maxIterAllowed; curIter++ {
 		llmReq, err := a.buildLLMMessageRequest(ctx, inMsg)
 		if err != nil {
 			return fmt.Sprintf("(failed to build llm message request: %s)", err.Error())
 		}
 
-		// call llm
 		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
 		if err != nil {
 			return fmt.Sprintf("(failed to call llm: %s)", err.Error())
@@ -36,38 +35,29 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) s
 		lastResponse = llmResp
 
 		choice := llmResp.FirstChoice()
-		// append assitant messages
 		if err := a.contextMgr.AppendAssistantMessage(inMsg, &choice.Message); err != nil {
-			finalResult = err.Error()
-			break
+			return err.Error()
 		}
 
 		if choice.IsStopped() {
-			// finished
-			finalResult = choice.Message.Content
-			break
+			return choice.Message.Content
 		}
 
 		if choice.HasToolCalls() {
-			// TODO maybe in the future we need to handle tool calls concurrently
-			tcs := choice.Message.ToolCalls
-			var err error
-			for _, tc := range tcs {
-				err = a.handleToolCall(ctx, inMsg, &tc)
-			}
-			if err != nil {
-				finalResult = err.Error()
-				break
+			for _, tc := range choice.Message.ToolCalls {
+				if err := a.handleToolCall(ctx, inMsg, &tc); err != nil {
+					return err.Error()
+				}
 			}
 		}
 	}
 
-	// if max iterations reached, and we still dont get a final result, use last response
-	if finalResult == "" && lastResponse != nil {
-		finalResult = fmt.Sprintf("(max iterations reached, last response: %s)", lastResponse.FirstChoice().Message.Content)
+	// max iterations reached
+	if lastResponse != nil {
+		return fmt.Sprintf("(max iterations reached, last response: %s)",
+			lastResponse.FirstChoice().Message.Content)
 	}
-
-	return finalResult
+	return "(max iterations reached with no response)"
 }
 
 type toolCallAndResult struct {
@@ -107,30 +97,25 @@ func (a *Agent) handleIncomingMessageStream(
 	inMsg *UserMessage,
 	result *AskStreamResult,
 ) {
-	curIter := 0
-	a.contextMgr.InitFromSessionLogs(inMsg.Channel, inMsg.ChatId) // lazy init
-	_, err := a.contextMgr.AppendUserMessage(inMsg)
-	if err != nil {
+	if err := a.initMessageContext(ctx, inMsg); err != nil {
 		result.Content <- &AskStreamResultContent{
 			Round:   -1,
 			Content: err.Error(),
 		}
-
 		close(result.ToolCall)
 		close(result.Content)
 		return
 	}
 
-	for curIter <= maxIterAllowed {
+mainLoop:
+	for curIter := 1; curIter <= maxIterAllowed; curIter++ {
 		var (
 			wg                      sync.WaitGroup
 			contentBuilder          strings.Builder
 			reasoningContentBuilder strings.Builder
-			// we also need to accumulate tool calls from assistant to feed back to llm
-			dstTcs = make([]*toolCallAndResult, 0)
+			dstTcs                  = make([]*toolCallAndResult, 0)
 		)
 
-		curIter++
 		llmReq, err := a.buildLLMMessageRequest(ctx, inMsg)
 		if err != nil {
 			result.Content <- &AskStreamResultContent{
@@ -188,24 +173,21 @@ func (a *Agent) handleIncomingMessageStream(
 		}
 
 		if len(dstTcs) == 0 {
-			// no tool calls, we are done
+			// no tool calls
 			break
 		}
 
-		// add tool call results
 		for _, tcr := range dstTcs {
-			err = a.contextMgr.AppendToolResult(inMsg, &tcr.tc, tcr.result)
-		}
-		if err != nil {
-			result.Content <- &AskStreamResultContent{
-				Round:   curIter,
-				Content: err.Error(),
+			if err := a.contextMgr.AppendToolResult(inMsg, &tcr.tc, tcr.result); err != nil {
+				result.Content <- &AskStreamResultContent{
+					Round:   curIter,
+					Content: err.Error(),
+				}
+				break mainLoop
 			}
-			break
 		}
 	}
 
-	// close all
 	close(result.ToolCall)
 	close(result.Content)
 }

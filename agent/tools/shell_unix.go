@@ -4,8 +4,13 @@ package tools
 
 import "regexp"
 
+// Commands that require user confirmation before execution
+var confirmRequiredPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\brm\s+.*`), // Any rm command
+}
+
+// Commands that are completely blocked (no confirmation)
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\brm\s+-[rf]{1,2}\b`),            // rm -r, rm -rf, rm -fr
 	regexp.MustCompile(`\b(format|mkfs)\b`),              // disk format
 	regexp.MustCompile(`\bdd\s+if=`),                     // dd
 	regexp.MustCompile(`>\s*/dev/sd`),                    // write to disk

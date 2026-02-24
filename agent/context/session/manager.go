@@ -46,10 +46,12 @@ func (s *AOFLogManager) GetOrCreate(channel, chatId string) (*AOFLog, error) {
 
 	// Create log instance and init file outside of write lock
 	log := &AOFLog{
-		filename:  "log.jsonl",
-		workspace: s.workspace,
-		channel:   channel,
-		chatId:    chatId,
+		baseLog: baseLog{
+			filename:  "log.jsonl",
+			workspace: s.workspace,
+			channel:   channel,
+			chatId:    chatId,
+		},
 	}
 
 	if err := log.initFile(s.workspace); err != nil {
@@ -79,7 +81,7 @@ func (s *AOFLogManager) GetLogItems(channel, chatId string) ([]LogItem, error) {
 }
 
 type ContextLogManager struct {
-	workspace string
+	Workspace string
 
 	mu   sync.RWMutex
 	logs map[string]*ContextLog
@@ -87,7 +89,7 @@ type ContextLogManager struct {
 
 func NewContextLogManager(ctx context.Context, c LogManagerConfig) *ContextLogManager {
 	mgr := &ContextLogManager{
-		workspace: c.Workspace,
+		Workspace: c.Workspace,
 		logs:      make(map[string]*ContextLog),
 	}
 
@@ -105,13 +107,15 @@ func (s *ContextLogManager) GetOrCreate(channel, chatId string) (*ContextLog, er
 
 	// Create log instance and init file outside of write lock
 	log := &ContextLog{
-		filename:  "log.context.jsonl",
-		workspace: s.workspace,
-		channel:   channel,
-		chatId:    chatId,
+		baseLog: baseLog{
+			filename:  "log.context.jsonl",
+			workspace: s.Workspace,
+			channel:   channel,
+			chatId:    chatId,
+		},
 	}
 
-	err := log.initFile(s.workspace)
+	err := log.initFile(s.Workspace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init: %w", err)
 	}

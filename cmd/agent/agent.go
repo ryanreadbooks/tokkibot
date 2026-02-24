@@ -111,6 +111,10 @@ func runAgent(ctx context.Context, args []string) error {
 		tea.WithMouseCellMotion(),
 	)
 	mod.setPg(pg)
+	
+	// Inject shell confirmer into agent context
+	mod.injectShellConfirmer()
+	
 	if _, err := pg.Run(); err != nil {
 		return err
 	}
