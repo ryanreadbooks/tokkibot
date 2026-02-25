@@ -3,11 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
-	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ryanreadbooks/tokkibot/agent"
+	"github.com/google/uuid"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui"
 
 	"github.com/spf13/cobra"
 )
@@ -77,21 +76,13 @@ func runAgentOnce(ctx context.Context, message string) error {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
 
-	_, err = restoreHistory(ag)
-	if err != nil {
+	// Initialize one-time session
+	if err := ag.InitSession(chmodel.CLI.String(), "one-time"); err != nil {
 		return err
 	}
 
-	answer := ag.Ask(ctx, &agent.UserMessage{
-		Channel: chmodel.ChannelCLI.String(),
-		ChatId:  "one-time",
-		Created: time.Now().Unix(),
-		Content: message,
-	})
-
-	fmt.Println("Assistant: ", answer)
-
-	return nil
+	// Run with spinner
+	return tui.RunWithSpinner(ctx, ag, chmodel.CLI.String(), "one-time", message)
 }
 
 func runAgent(ctx context.Context, args []string) error {
@@ -100,22 +91,15 @@ func runAgent(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
 
-	history, err := restoreHistory(ag)
-	if err != nil {
-		return err
+	// Generate or use existing chat ID
+	if resumeSessionChatId == "" {
+		agentChatId = uuid.New().String()
+	} else {
+		agentChatId = resumeSessionChatId
 	}
 
-	mod := initAgentModel(ctx, ag, history)
-	pg := tea.NewProgram(&mod,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
-	mod.setPg(pg)
-	
-	// Inject shell confirmer into agent context
-	mod.injectShellConfirmer()
-	
-	if _, err := pg.Run(); err != nil {
+	// Run TUI
+	if err := tui.Run(ctx, ag, chmodel.CLI.String(), agentChatId); err != nil {
 		return err
 	}
 

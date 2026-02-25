@@ -92,6 +92,7 @@ type StreamContentFragment struct {
 }
 
 type StreamToolCallFragment struct {
+	Id               string
 	Name             string
 	ArgumentFragment string
 }
@@ -196,6 +197,7 @@ func readStreamResponseChunk(
 					buf.Arguments.WriteString(tc.Function.Arguments)
 					select {
 					case toolCallCh <- &StreamToolCallFragment{
+						Id:               buf.Id,
 						Name:             buf.Name,
 						ArgumentFragment: tc.Function.Arguments,
 					}:
@@ -216,6 +218,7 @@ func readStreamResponseChunk(
 					}
 					select {
 					case toolCallCh <- &StreamToolCallFragment{
+						Id:               tc.Id,
 						Name:             tc.Function.Name,
 						ArgumentFragment: tc.Function.Arguments,
 					}:

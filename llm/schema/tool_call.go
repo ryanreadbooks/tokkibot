@@ -7,8 +7,8 @@ const (
 )
 
 type CompletionToolCall struct {
-	Id       string                     `json:"id" mapstructure:"id"`
-	Type     ToolCallType               `json:"type" mapstructure:"type"`
+	Id       string                     `json:"id"       mapstructure:"id"`
+	Type     ToolCallType               `json:"type"     mapstructure:"type"`
 	Function CompletionToolCallFunction `json:"function" mapstructure:"function"`
 }
 
@@ -33,7 +33,7 @@ type CompletionToolCallFunction struct {
 func GatherStreamTools(
 	m map[int64]StreamChoiceDeltaToolCall, // index -> tool call mapping
 	cur StreamChoiceDeltaToolCall,
-) (map[int64]StreamChoiceDeltaToolCall) {
+) map[int64]StreamChoiceDeltaToolCall {
 	curIdx := cur.Index
 
 	if existing, ok := m[curIdx]; ok {

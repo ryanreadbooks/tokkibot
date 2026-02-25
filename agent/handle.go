@@ -142,11 +142,42 @@ mainLoop:
 		})
 
 		wg.Go(func() {
+			// Track tool calls by ID to accumulate arguments
+			// Use ID as unique identifier to handle multiple calls to same tool
+			toolCallsMap := make(map[string]*AskStreamResultToolCall)
+			toolCallOrder := make([]string, 0) // preserve order (store IDs)
+
 			for toolCall := range streamPacked.ToolCall {
+				tc, exists := toolCallsMap[toolCall.Id]
+				if !exists {
+					// New tool call - send initial notification
+					tc = &AskStreamResultToolCall{
+						Round:     curIter,
+						Name:      toolCall.Name,
+						Arguments: toolCall.ArgumentFragment,
+					}
+					toolCallsMap[toolCall.Id] = tc
+					toolCallOrder = append(toolCallOrder, toolCall.Id)
+					
+					// Send initial notification (name only, empty args)
+					result.ToolCall <- &AskStreamResultToolCall{
+						Round:     curIter,
+						Name:      toolCall.Name,
+						Arguments: "", // empty = collecting
+					}
+				} else {
+					// Accumulate arguments for existing tool call
+					tc.Arguments += toolCall.ArgumentFragment
+				}
+			}
+
+			// Send complete tool calls with full arguments in order
+			for _, id := range toolCallOrder {
+				tc := toolCallsMap[id]
 				result.ToolCall <- &AskStreamResultToolCall{
 					Round:     curIter,
-					Name:      toolCall.Name,
-					Arguments: toolCall.ArgumentFragment,
+					Name:      tc.Name,
+					Arguments: tc.Arguments,
 				}
 			}
 		})
