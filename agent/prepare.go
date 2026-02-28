@@ -4,21 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ryanreadbooks/tokkibot/agent"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm/factory"
 )
 
-func prepareAgent(ctx context.Context) (
-	ag *agent.Agent,
-	err error,
-) {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		err = fmt.Errorf("failed to load config: %w", err)
-		return
-	}
-
+func Prepare(ctx context.Context) (ag *Agent, err error) {
+	cfg := config.GetConfig()
 	model := cfg.Providers[cfg.DefaultProvider].DefaultModel
 	apiKey := cfg.Providers[cfg.DefaultProvider].ApiKey
 	baseURL := cfg.Providers[cfg.DefaultProvider].BaseURL
@@ -33,11 +24,10 @@ func prepareAgent(ctx context.Context) (
 		return
 	}
 
-	ag = agent.NewAgent(llm, agent.AgentConfig{
+	ag = NewAgent(llm, AgentConfig{
 		RootCtx: ctx,
 		Model:   model,
 	})
 
 	return ag, nil
 }
-

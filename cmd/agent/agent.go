@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/ryanreadbooks/tokkibot/agent"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui"
 
@@ -71,7 +72,7 @@ func init() {
 }
 
 func runAgentOnce(ctx context.Context, message string) error {
-	ag, err := prepareAgent(ctx)
+	ag, err := agent.Prepare(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -86,7 +87,7 @@ func runAgentOnce(ctx context.Context, message string) error {
 }
 
 func runAgent(ctx context.Context, args []string) error {
-	ag, err := prepareAgent(ctx)
+	ag, err := agent.Prepare(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -109,7 +110,7 @@ func runAgent(ctx context.Context, args []string) error {
 }
 
 func runAgentListSkills(ctx context.Context) error {
-	ag, err := prepareAgent(ctx)
+	ag, err := agent.Prepare(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -130,7 +131,7 @@ func runAgentListSkills(ctx context.Context) error {
 }
 
 func runAgentSystemPrompt(ctx context.Context) error {
-	ag, err := prepareAgent(ctx)
+	ag, err := agent.Prepare(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}

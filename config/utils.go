@@ -15,9 +15,14 @@ var (
 	projectDirOnce sync.Once
 )
 
-func Init() {
+func MustInit() {
 	GetWorkspaceDir()
 	GetProjectDir()
+	var err error
+	conf, err = LoadConfig()
+	if err != nil {
+		panic(err)
+	}
 }
 
 const configFileName = "config.yaml"
