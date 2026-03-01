@@ -46,7 +46,7 @@ type ContentUnionParam struct {
 }
 
 func (p *ContentUnionParam) GetContent() string {
-	return p.Text.GetValue() + p.ImageURL.GetURL()
+	return p.Text.GetValue()
 }
 
 func ContentUnionParamsContent(c []*ContentUnionParam) string {
@@ -90,7 +90,7 @@ func ToolCallParamsContent(tcs []*ToolCallParam) string {
 }
 
 type ImageURLParam struct {
-	URL string
+	URL string `json:"url"`
 }
 
 func (p *ImageURLParam) GetURL() string {

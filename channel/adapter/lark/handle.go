@@ -1,10 +1,13 @@
 package lark
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
@@ -51,11 +54,15 @@ type PostElementRaw struct {
 	Style     []string `json:"style,omitempty"`
 }
 
-func (a *LarkAdapter) handlePostMessage(content string) (string, error) {
+type ImageMessageContent struct {
+	ImageKey string `json:"image_key"`
+}
+
+func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId string) (string, []*model.IncomingMessageAttachment, error) {
 	var post PostMessageContent
 	err := json.Unmarshal(xstring.ToBytes(content), &post)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	var textBuilder strings.Builder
@@ -65,6 +72,8 @@ func (a *LarkAdapter) handlePostMessage(content string) (string, error) {
 		textBuilder.WriteString(post.Title)
 		textBuilder.WriteString("\n")
 	}
+
+	attachments := make([]*model.IncomingMessageAttachment, 0)
 
 	// Iterate through all lines
 	for lineIdx, line := range post.Content {
@@ -99,11 +108,36 @@ func (a *LarkAdapter) handlePostMessage(content string) (string, error) {
 				textBuilder.WriteString("[Image:")
 				textBuilder.WriteString(element.ImageKey)
 				textBuilder.WriteString("]")
+				if data, err := a.downloadImage(ctx, messageId, element.ImageKey); err == nil {
+					attachments = append(attachments, &model.IncomingMessageAttachment{
+						Key:  wrapResourceKey(element.ImageKey),
+						Type: model.AttachmentImage,
+						Data: data,
+					})
+				}
 			case "media":
 				// Media displayed as placeholder
 				textBuilder.WriteString("[Media:")
 				textBuilder.WriteString(element.FileKey)
+				textBuilder.WriteString(",Cover:")
+				textBuilder.WriteString(element.ImageKey)
 				textBuilder.WriteString("]")
+				// download cover and video content
+				if coverData, err := a.downloadImage(ctx, messageId, element.ImageKey); err == nil {
+					attachments = append(attachments, &model.IncomingMessageAttachment{
+						Key:  wrapResourceKey(element.ImageKey),
+						Type: model.AttachmentImage,
+						Data: coverData,
+					})
+				}
+				if videoData, err := a.downloadFile(ctx, element.FileKey); err == nil {
+					attachments = append(attachments, &model.IncomingMessageAttachment{
+						Key:  wrapResourceKey(element.FileKey),
+						Type: model.AttachmentVideo,
+						Data: videoData,
+					})
+				}
+
 			case "emotion":
 				// Emotion displayed as placeholder
 				textBuilder.WriteString("[Emotion:")
@@ -125,11 +159,26 @@ func (a *LarkAdapter) handlePostMessage(content string) (string, error) {
 		}
 	}
 
-	return textBuilder.String(), nil
+	return textBuilder.String(), attachments, nil
 }
 
-func (a *LarkAdapter) handleImageMessage() string {
-	return ""
+func (a *LarkAdapter) handleImageMessage(ctx context.Context, messageId, content string) (string, []byte, error) {
+	var image ImageMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &image)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if len(image.ImageKey) == 0 {
+		return "", nil, fmt.Errorf("image key is empty")
+	}
+
+	data, err := a.downloadImage(ctx, messageId, image.ImageKey)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return image.ImageKey, data, nil
 }
 
 func (a *LarkAdapter) handleFileMessage() string {

@@ -1,14 +1,42 @@
 package model
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type IncomingMessage struct {
-	SenderId string
-	Channel  Type
-	ChatId   string
-	Created  int64  // unix timestamp in seconds
-	Content  string // message text
-	Metadata map[string]any
+	SenderId    string
+	Channel     Type
+	ChatId      string
+	Created     int64  // unix timestamp in seconds
+	Content     string // message text
+	Attachments []*IncomingMessageAttachment
+	Metadata    map[string]any
+
+	SourceCtx context.Context
+}
+
+func (m *IncomingMessage) Context() context.Context {
+	if m.SourceCtx == nil {
+		return context.Background()
+	}
+
+	return m.SourceCtx
+}
+
+type AttachmentType string
+
+const (
+	AttachmentImage AttachmentType = "image"
+	AttachmentFile  AttachmentType = "file"
+	AttachmentVideo AttachmentType = "video"
+)
+
+type IncomingMessageAttachment struct {
+	Key  string
+	Type AttachmentType
+	Data []byte
 }
 
 // unique session identifier for the message

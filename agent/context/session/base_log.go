@@ -6,10 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
-	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema"
 )
+
+var regMediaRef = regexp.MustCompile(`\[image\]\((@medias/[^)]+)\)`)
 
 // baseLog contains common fields and methods for log files
 type baseLog struct {
@@ -68,7 +71,7 @@ func (b *baseLog) initFile(workspace string, flags int) error {
 // createLogItem creates a new log item with the given role and message
 func (b *baseLog) createLogItem(role schema.Role, msg *schema.MessageParam) LogItem {
 	return LogItem{
-		Id:      newLogItemId(),
+		Id:      NewLogItemId(),
 		Role:    role,
 		Created: time.Now().Unix(),
 		Message: msg,

@@ -49,24 +49,7 @@ func (s *ContextLog) Flush(root string) error {
 	return nil
 }
 
-func (s *ContextLog) AddUserMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleUser, msg)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.logs = append(s.logs, item)
-	return s.baseLog.writeLine(&item)
-}
-
-func (s *ContextLog) AddAssistantMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleAssistant, msg)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.logs = append(s.logs, item)
-	return s.baseLog.writeLine(&item)
-}
-
-func (s *ContextLog) AddToolMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleTool, msg)
+func (s *ContextLog) AddLogItem(item LogItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logs = append(s.logs, item)
@@ -96,6 +79,7 @@ func (s *ContextLog) ResetLogsFromParam(params []schema.MessageParam) {
 }
 
 // loadExistingLogs loads existing log items from file into memory
+// readLogItems will automatically expand refs to actual content
 func (s *ContextLog) loadExistingLogs(path string) error {
 	items, err := readLogItems(path)
 	if err != nil {
@@ -114,7 +98,7 @@ func (s *ContextLog) loadExistingLogs(path string) error {
 // isAlreadyRef checks if content is already a ref reference
 func isAlreadyRef(content string) bool {
 	// Check if content starts with @refs/ and is relatively short (likely a ref)
-	if strings.HasPrefix(content, ref.Prefix) {
+	if strings.HasPrefix(content, ref.RefPrefix) {
 		// If it contains the hint text, it's definitely a ref
 		if strings.Contains(content, "(use load_ref tool to read full content)") {
 			return true

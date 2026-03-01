@@ -14,7 +14,7 @@ var conf Config
 const (
 	defaultEnableThinking               = false
 	defaultTemperature                  = -1
-	defaultMaxTokens                    = 25000
+	defaultMaxTokens                    = 32768
 	defaultWindowLimit                  = 100000
 	defaultCompactThresholdPercentage   = 0.70
 	defaultSummarizeThresholdPercentage = 0.60

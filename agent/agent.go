@@ -21,7 +21,11 @@ import (
 //go:embed summary_prompt.md
 var summaryPrompt string
 
-type UserMessage = agcontext.UserInput
+type (
+	UserMessage           = agcontext.UserInput
+	UserMessageAttachment = agcontext.UserInputAttachment
+	AttachmentType        = agcontext.AttachmentType
+)
 
 type AgentConfig struct {
 	RootCtx context.Context
@@ -117,6 +121,7 @@ func (a *Agent) RegisterTool(tool tool.Invoker) {
 	}
 }
 
+// Handling incoming message in a blocking way
 func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
 	return a.handleIncomingMessage(ctx, msg)
 }
@@ -138,6 +143,7 @@ type AskStreamResult struct {
 	ToolCall chan *AskStreamResultToolCall
 }
 
+// Handling incoming message in a streaming way
 func (a *Agent) AskStream(ctx context.Context, msg *UserMessage) *AskStreamResult {
 	res := AskStreamResult{
 		Content:  make(chan *AskStreamResultContent, 16),

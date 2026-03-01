@@ -11,21 +11,27 @@ import (
 )
 
 // initMessageContext initializes session logs and appends the user message
-func (a *Agent) initMessageContext(ctx context.Context, inMsg *UserMessage) error {
-	a.contextMgr.InitFromSessionLogs(inMsg.Channel, inMsg.ChatId)
-	_, err := a.contextMgr.AppendUserMessage(inMsg)
+func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) error {
+	a.contextMgr.InitFromSessionLogs(userMsg.Channel, userMsg.ChatId)
+	_, err := a.contextMgr.AppendUserMessage(userMsg)
 	return err
 }
 
-func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) string {
-	if err := a.initMessageContext(ctx, inMsg); err != nil {
+func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage) string {
+	if err := a.initMessageContext(ctx, userMsg); err != nil {
 		return err.Error()
 	}
 
 	agentCfg := config.GetAgentConfig()
 	var lastResponse *schema.Response
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
-		llmReq, err := a.buildLLMMessageRequest(ctx, inMsg)
+		select {
+		case <-ctx.Done():
+			return fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error())
+		default:
+		}
+
+		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
 			return fmt.Sprintf("(failed to build llm message request: %s)", err.Error())
 		}
@@ -37,7 +43,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) s
 		lastResponse = llmResp
 
 		choice := llmResp.FirstChoice()
-		if err := a.contextMgr.AppendAssistantMessage(inMsg, &choice.Message); err != nil {
+		if err := a.contextMgr.AppendAssistantMessage(userMsg, &choice.Message); err != nil {
 			return err.Error()
 		}
 
@@ -47,7 +53,13 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) s
 
 		if choice.HasToolCalls() {
 			for _, tc := range choice.Message.ToolCalls {
-				if err := a.handleToolCall(ctx, inMsg, &tc); err != nil {
+				select {
+				case <-ctx.Done():
+					return fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error())
+				default:
+				}
+
+				if err := a.handleToolCall(ctx, userMsg, &tc); err != nil {
 					return err.Error()
 				}
 			}
@@ -94,12 +106,8 @@ func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) schema.Str
 	}
 }
 
-func (a *Agent) handleIncomingMessageStream(
-	ctx context.Context,
-	inMsg *UserMessage,
-	result *AskStreamResult,
-) {
-	if err := a.initMessageContext(ctx, inMsg); err != nil {
+func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMessage, result *AskStreamResult) {
+	if err := a.initMessageContext(ctx, userMsg); err != nil {
 		result.Content <- &AskStreamResultContent{
 			Round:   -1,
 			Content: err.Error(),
@@ -110,8 +118,19 @@ func (a *Agent) handleIncomingMessageStream(
 	}
 
 	agentCfg := config.GetAgentConfig()
+
 mainLoop:
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
+		select {
+		case <-ctx.Done():
+			result.Content <- &AskStreamResultContent{
+				Round:   curIter,
+				Content: fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()),
+			}
+			break mainLoop
+		default:
+		}
+
 		var (
 			wg                      sync.WaitGroup
 			contentBuilder          strings.Builder
@@ -119,7 +138,7 @@ mainLoop:
 			dstTcs                  = make([]*toolCallAndResult, 0)
 		)
 
-		llmReq, err := a.buildLLMMessageRequest(ctx, inMsg)
+		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
 			result.Content <- &AskStreamResultContent{
 				Round:   curIter,
@@ -161,7 +180,7 @@ mainLoop:
 					}
 					toolCallsMap[toolCall.Id] = tc
 					toolCallOrder = append(toolCallOrder, toolCall.Id)
-					
+
 					// Send initial notification (name only, empty args)
 					result.ToolCall <- &AskStreamResultToolCall{
 						Round:     curIter,
@@ -193,7 +212,7 @@ mainLoop:
 		}
 
 		// accumulate assistant message for this iteration
-		err = a.contextMgr.AppendAssistantMessage(inMsg, &schema.CompletionMessage{
+		err = a.contextMgr.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
 			Content:          contentBuilder.String(),
 			ToolCalls:        assistantTcs,
 			ReasoningContent: reasoningContentBuilder.String(),
@@ -212,7 +231,17 @@ mainLoop:
 		}
 
 		for _, tcr := range dstTcs {
-			if err := a.contextMgr.AppendToolResult(inMsg, &tcr.tc, tcr.result); err != nil {
+			select {
+			case <-ctx.Done():
+				result.Content <- &AskStreamResultContent{
+					Round:   curIter,
+					Content: fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()),
+				}
+				break mainLoop
+			default:
+			}
+
+			if err := a.contextMgr.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
 				result.Content <- &AskStreamResultContent{
 					Round:   curIter,
 					Content: err.Error(),

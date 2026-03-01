@@ -16,8 +16,11 @@ import (
 var regChecker = regexp.MustCompile(`^@refs/[a-zA-Z0-9]+$`)
 
 const (
-	refDir = "refs"
-	Prefix = "@refs/"
+	refDir    = "refs"
+	RefPrefix = "@refs/"
+
+	mediaRefDir    = "medias"
+	MediaRefPrefix = "@medias/"
 )
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -56,7 +59,7 @@ func Fullpath(ref string) (string, error) {
 		return "", fmt.Errorf("invalid ref name format")
 	}
 
-	name, ok := strings.CutPrefix(ref, Prefix)
+	name, ok := strings.CutPrefix(ref, RefPrefix)
 	if ok {
 		return realRefFilename(name), nil
 	}
@@ -84,5 +87,5 @@ func Save(content string) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("%s%s", Prefix, name), nil
+	return fmt.Sprintf("%s%s", RefPrefix, name), nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
@@ -25,6 +26,9 @@ type LarkAdapter struct {
 
 	input  chan *model.IncomingMessage
 	output chan *model.OutgoingMessage
+
+	cancelMu sync.Mutex
+	cancels  map[string]context.CancelFunc
 }
 
 type LarkConfig struct {
@@ -48,8 +52,10 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 		wscli: wscli,
 		cli:   cli,
 
-		input:  make(chan *model.IncomingMessage, 128),
-		output: make(chan *model.OutgoingMessage, 128),
+		input:    make(chan *model.IncomingMessage, 1),
+		output:   make(chan *model.OutgoingMessage, 16),
+		cancels:  make(map[string]context.CancelFunc),
+		cancelMu: sync.Mutex{},
 	}
 	eventDispatcher.OnP2MessageReceiveV1(adapter.onMessageReceive)
 
@@ -85,6 +91,12 @@ func (a *LarkAdapter) Start(ctx context.Context) error {
 
 			// send output message
 			a.replyInteractiveMessage(ctx, messageId, msg.Content)
+
+			a.cancelMu.Lock()
+			if cancel := a.cancels[messageId]; cancel != nil {
+				cancel()
+			}
+			a.cancelMu.Unlock()
 		}
 	}
 }
@@ -100,17 +112,27 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 	)
 
 	var (
-		content string
-		err     error
+		content     string
+		err         error
+		attachments []*model.IncomingMessageAttachment
 	)
 
 	switch messageType {
 	case imv1.MsgTypeText:
 		content, err = a.handleTextMessage(messageContent)
 	case imv1.MsgTypePost:
-		content, err = a.handlePostMessage(messageContent)
+		content, attachments, err = a.handlePostMessage(ctx, messageContent, messageId)
 	case imv1.MsgTypeImage:
-		content = a.handleImageMessage()
+		var (
+			imageData []byte
+			imageKey  string
+		)
+		imageKey, imageData, err = a.handleImageMessage(ctx, messageId, messageContent)
+		attachments = append(attachments, &model.IncomingMessageAttachment{
+			Key:  wrapResourceKey(imageKey),
+			Type: model.AttachmentImage,
+			Data: imageData,
+		})
 	case imv1.MsgTypeFile:
 		content = a.handleFileMessage()
 	case imv1.MsgTypeAudio:
@@ -134,23 +156,30 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		return nil
 	}
 
-	if len(content) == 0 {
-		slog.InfoContext(ctx, "no content in lark message", "message_id", messageId)
+	if len(content) == 0 && len(attachments) == 0 {
+		slog.InfoContext(ctx, "no content and attachments in lark message", "message_id", messageId)
 		return nil
 	}
 
 	// reaction to message received
 	reactionId := a.sendMessageReaction(ctx, messageId, emoji.Get)
 
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
+	a.cancelMu.Lock()
+	a.cancels[messageId] = sourceCancel
+	a.cancelMu.Unlock()
+
 	a.input <- &model.IncomingMessage{
-		SenderId: senderId,
-		Channel:  model.Lark,
-		ChatId:   chatId,
-		Content:  content,
+		SenderId:    senderId,
+		Channel:     model.Lark,
+		ChatId:      chatId,
+		Content:     content,
+		Attachments: attachments,
 		Metadata: map[string]any{
 			"message_id":  messageId,
 			"reaction_id": reactionId,
 		},
+		SourceCtx: sourceCtx,
 	}
 
 	return nil

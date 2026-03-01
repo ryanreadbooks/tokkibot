@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-
-	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
 func getSessionLogKey(channel, chatId string) string {
@@ -35,18 +33,7 @@ func (s *AOFLog) checkExists(root string) error {
 	return nil
 }
 
-func (s *AOFLog) AddUserMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleUser, msg)
-	return s.writeLine(&item)
-}
-
-func (s *AOFLog) AddAssistantMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleAssistant, msg)
-	return s.writeLine(&item)
-}
-
-func (s *AOFLog) AddToolMessage(msg *schema.MessageParam) error {
-	item := s.createLogItem(schema.RoleTool, msg)
+func (s *AOFLog) AddLogItem(item LogItem) error {
 	return s.writeLine(&item)
 }
 

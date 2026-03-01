@@ -12,9 +12,12 @@ import (
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/agent/context/session"
+	"github.com/ryanreadbooks/tokkibot/agent/ref/media"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/config"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/pkg/dataurl"
+	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
 type promptBuiltinInfo struct {
@@ -178,14 +181,6 @@ func (c *ContextManager) appendMessage(
 	addToAOF func(*session.AOFLog, *schema.MessageParam) error,
 	addToContext func(*session.ContextLog, *schema.MessageParam) error,
 ) error {
-	aofLog, err := c.aofLogManager.GetOrCreate(channel, chatId)
-	if err != nil {
-		return err
-	}
-	if err = addToAOF(aofLog, msgParam); err != nil {
-		return err
-	}
-
 	contextLog, err := c.contextLogManager.GetOrCreate(channel, chatId)
 	if err != nil {
 		return err
@@ -194,24 +189,107 @@ func (c *ContextManager) appendMessage(
 		return err
 	}
 
+	aofLog, err := c.aofLogManager.GetOrCreate(channel, chatId)
+	if err != nil {
+		return err
+	}
+	if err = addToAOF(aofLog, msgParam); err != nil {
+		return err
+	}
+
 	c.messageList = append(c.messageList, *msgParam)
 	return nil
 }
 
+type contentUnionParamWithKey struct {
+	*schema.ContentUnionParam
+	Key string
+}
+
+func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionParamWithKey, error) {
+	params := make([]*contentUnionParamWithKey, 0, len(attachments))
+	for _, attachment := range attachments {
+		switch attachment.Type {
+		case ImageAttachment:
+			data := dataurl.Base64Encode(attachment.Data)
+			params = append(params, &contentUnionParamWithKey{
+				ContentUnionParam: &schema.ContentUnionParam{
+					ImageURL: &schema.ImageURLParam{
+						URL: data,
+					},
+				},
+				Key: attachment.Key,
+			})
+		case FileAttachment:
+			// we consider file attachment as text string content if it is a file
+			params = append(params, &contentUnionParamWithKey{
+				ContentUnionParam: &schema.ContentUnionParam{
+					Text: &schema.TextParam{
+						Value: xstring.FromBytes(attachment.Data),
+					},
+				},
+				Key: attachment.Key,
+			})
+		default:
+			return nil, fmt.Errorf("unsupported attachment type yet: %s", attachment.Type)
+		}
+	}
+
+	return params, nil
+}
+
 func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]schema.MessageParam, error) {
-	userMsg := schema.NewUserMessageParam(inMsg.Content)
-	err := c.appendMessage(
-		inMsg.Channel, inMsg.ChatId, &userMsg,
-		func(log *session.AOFLog, msg *schema.MessageParam) error {
-			return log.AddUserMessage(msg)
+	// check any attachments
+	unionParamsWithKey, err := parseInputAttachments(inMsg.Attachments)
+	if err != nil {
+		return nil, err
+	}
+
+	logItem := session.LogItem{
+		Id:      session.NewLogItemId(),
+		Role:    schema.RoleUser,
+		Created: time.Now().Unix(),
+		Metadata: &session.LogItemMeta{
+			ImageRef: map[int]string{},
 		},
-		func(log *session.ContextLog, msg *schema.MessageParam) error {
-			return log.AddUserMessage(msg)
+	}
+
+	var msgParam schema.MessageParam
+	if len(unionParamsWithKey) > 0 {
+		for idx, un := range unionParamsWithKey {
+			if un != nil && un.ImageURL != nil && un.ImageURL.URL != "" && un.Key != "" {
+				if mediaRefName, err := media.SaveMedia(xstring.ToBytes(un.ImageURL.URL), un.Key); err == nil {
+					// we use ref
+					logItem.Metadata.ImageRef[idx] = mediaRefName
+				}
+			}
+		}
+
+		unionParams := make([]*schema.ContentUnionParam, 0, len(unionParamsWithKey))
+		for _, un := range unionParamsWithKey {
+			unionParams = append(unionParams, un.ContentUnionParam)
+		}
+
+		msgParam = schema.NewUserMessageParam(unionParams)
+	} else {
+		msgParam = schema.NewUserMessageParam(inMsg.Content)
+	}
+
+	logItem.Message = &msgParam
+
+	err = c.appendMessage(
+		inMsg.Channel, inMsg.ChatId, &msgParam,
+		func(aofLog *session.AOFLog, msg *schema.MessageParam) error {
+			return aofLog.AddLogItem(logItem)
+		},
+		func(contextLog *session.ContextLog, msg *schema.MessageParam) error {
+			return contextLog.AddLogItem(logItem)
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
+
 	return c.messageList, nil
 }
 
@@ -222,13 +300,20 @@ func (c *ContextManager) AppendToolResult(
 	result string,
 ) error {
 	msgParam := schema.NewToolMessageParam(toolCall.Id, result)
+	logItem := session.LogItem{
+		Id:      session.NewLogItemId(),
+		Role:    schema.RoleTool,
+		Created: time.Now().Unix(),
+		Message: &msgParam,
+	}
+
 	return c.appendMessage(
 		inMsg.Channel, inMsg.ChatId, &msgParam,
 		func(log *session.AOFLog, msg *schema.MessageParam) error {
-			return log.AddToolMessage(msg)
+			return log.AddLogItem(logItem)
 		},
 		func(log *session.ContextLog, msg *schema.MessageParam) error {
-			return log.AddToolMessage(msg)
+			return log.AddLogItem(logItem)
 		},
 	)
 }
@@ -247,13 +332,20 @@ func (c *ContextManager) AppendAssistantMessage(
 		msg.GetToolCallParams(),
 		reasoningContent,
 	)
+	logItem := session.LogItem{
+		Id:      session.NewLogItemId(),
+		Role:    schema.RoleAssistant,
+		Created: time.Now().Unix(),
+		Message: &msgParam,
+	}
+
 	return c.appendMessage(
 		inMsg.Channel, inMsg.ChatId, &msgParam,
 		func(log *session.AOFLog, msg *schema.MessageParam) error {
-			return log.AddAssistantMessage(msg)
+			return log.AddLogItem(logItem)
 		},
 		func(log *session.ContextLog, msg *schema.MessageParam) error {
-			return log.AddAssistantMessage(msg)
+			return log.AddLogItem(logItem)
 		},
 	)
 }
@@ -266,6 +358,7 @@ func (c *ContextManager) GetMessageContext(channel, chatId string) (
 		return nil, err
 	}
 
+	// In-memory logs already contain actual content (refs are only used for disk storage)
 	logs := log.GetLogs()
 	msgList := make([]schema.MessageParam, 0, len(logs))
 	for _, log := range logs {
@@ -305,17 +398,17 @@ func (c *ContextManager) CompressToolCalls(channel, chatId string, count int) (i
 	if err != nil {
 		return 0, err
 	}
-	
+
 	compressed, err := contextLog.CompressToolCalls(count)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Flush to disk
 	if err := contextLog.Flush(c.contextLogManager.Workspace); err != nil {
 		return compressed, fmt.Errorf("failed to flush after compression: %w", err)
 	}
-	
+
 	return compressed, nil
 }
 
@@ -330,6 +423,7 @@ func (c *ContextManager) SummarizeHistory(
 		return err
 	}
 
+	// In-memory logs already contain actual content
 	logs := contextLog.GetLogs()
 	if len(logs) < 10 {
 		// Too few messages to summarize
@@ -347,18 +441,18 @@ func (c *ContextManager) SummarizeHistory(
 	// Extract messages to summarize (exclude recent messages)
 	startIdx := 0
 	endIdx := len(logs) - recentKeepCount
-	
+
 	// Ensure message sequence integrity: if endIdx-1 is assistant with tool_calls,
 	// we must include all corresponding tool responses to avoid incomplete sequences
 	for endIdx < len(logs) {
 		if endIdx <= startIdx {
 			break
 		}
-		
+
 		prevMsg := logs[endIdx-1].Message
-		if prevMsg.Role() == schema.RoleAssistant && 
-		   prevMsg.AssistantMessageParam != nil && 
-		   len(prevMsg.AssistantMessageParam.ToolCalls) > 0 {
+		if prevMsg.Role() == schema.RoleAssistant &&
+			prevMsg.AssistantMessageParam != nil &&
+			len(prevMsg.AssistantMessageParam.ToolCalls) > 0 {
 			// Need to include following tool responses
 			toolCallIds := make(map[string]bool)
 			for _, tc := range prevMsg.AssistantMessageParam.ToolCalls {
@@ -366,7 +460,7 @@ func (c *ContextManager) SummarizeHistory(
 					toolCallIds[tc.Function.Id] = true
 				}
 			}
-			
+
 			// Scan forward to collect all tool responses
 			matched := 0
 			for j := endIdx; j < len(logs) && matched < len(toolCallIds); j++ {
@@ -386,7 +480,7 @@ func (c *ContextManager) SummarizeHistory(
 			break
 		}
 	}
-	
+
 	// Ensure startIdx doesn't begin with orphaned tool messages
 	// If first message is a tool message, find its corresponding assistant message
 	if startIdx < endIdx && logs[startIdx].Message.Role() == schema.RoleTool {
@@ -394,26 +488,26 @@ func (c *ContextManager) SummarizeHistory(
 		for i := startIdx - 1; i >= 0; i-- {
 			msg := logs[i].Message
 			if msg.Role() == schema.RoleAssistant &&
-			   msg.AssistantMessageParam != nil &&
-			   len(msg.AssistantMessageParam.ToolCalls) > 0 {
+				msg.AssistantMessageParam != nil &&
+				len(msg.AssistantMessageParam.ToolCalls) > 0 {
 				// Found the assistant message, include it
 				startIdx = i
 				break
 			}
 		}
-		
+
 		// If we still start with a tool message (couldn't find assistant msg),
 		// skip orphaned tool messages
 		for startIdx < endIdx && logs[startIdx].Message.Role() == schema.RoleTool {
 			startIdx++
 		}
 	}
-	
+
 	if endIdx <= startIdx {
 		// Nothing to summarize after adjustments
 		return nil
 	}
-	
+
 	toSummarize := make([]schema.MessageParam, 0, endIdx-startIdx)
 	for i := startIdx; i < endIdx; i++ {
 		toSummarize = append(toSummarize, *logs[i].Message)
@@ -428,13 +522,13 @@ func (c *ContextManager) SummarizeHistory(
 	// Create new message list: summary + recent messages
 	// Note: system prompt is managed separately, not in contextLog
 	newMsgList := make([]schema.MessageParam, 0, 1+recentKeepCount)
-	
+
 	// Add summary as user message
 	summaryMsg := schema.NewUserMessageParam(
 		fmt.Sprintf("[Conversation History Summary]\n%s\n[End of Summary, Recent Messages Follow]", summary),
 	)
 	newMsgList = append(newMsgList, summaryMsg)
-	
+
 	// Add recent messages
 	for i := endIdx; i < len(logs); i++ {
 		newMsgList = append(newMsgList, *logs[i].Message)
@@ -442,7 +536,7 @@ func (c *ContextManager) SummarizeHistory(
 
 	// Update context log with new messages
 	contextLog.ResetLogsFromParam(newMsgList)
-	
+
 	// Flush to disk
 	if err := contextLog.Flush(c.contextLogManager.Workspace); err != nil {
 		return fmt.Errorf("failed to flush after summarization: %w", err)
