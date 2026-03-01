@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ryanreadbooks/tokkibot/config"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
@@ -21,8 +22,9 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, inMsg *UserMessage) s
 		return err.Error()
 	}
 
+	agentCfg := config.GetAgentConfig()
 	var lastResponse *schema.Response
-	for curIter := 1; curIter <= maxIterAllowed; curIter++ {
+	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		llmReq, err := a.buildLLMMessageRequest(ctx, inMsg)
 		if err != nil {
 			return fmt.Sprintf("(failed to build llm message request: %s)", err.Error())
@@ -107,8 +109,9 @@ func (a *Agent) handleIncomingMessageStream(
 		return
 	}
 
+	agentCfg := config.GetAgentConfig()
 mainLoop:
-	for curIter := 1; curIter <= maxIterAllowed; curIter++ {
+	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		var (
 			wg                      sync.WaitGroup
 			contentBuilder          strings.Builder

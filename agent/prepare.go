@@ -25,8 +25,9 @@ func Prepare(ctx context.Context) (ag *Agent, err error) {
 	}
 
 	ag = NewAgent(llm, AgentConfig{
-		RootCtx: ctx,
-		Model:   model,
+		RootCtx:  ctx,
+		Provider: cfg.DefaultProvider,
+		Model:    model,
 	})
 
 	return ag, nil

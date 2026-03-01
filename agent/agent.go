@@ -23,38 +23,17 @@ var summaryPrompt string
 
 type UserMessage = agcontext.UserInput
 
-const (
-	maxIterAllowed = 30
-
-	modelTemperature = 1.0
-	maxTokenAllowed  = 25000
-
-	// Context window management
-	contextWindowLimit           = 100000 // Total context window limit
-	contextCompactThresholdPct   = 0.70   // Trigger compaction at 85% of limit
-	contextSummarizeThresholdPct = 0.60   // Trigger summarization at 65% of limit
-	toolCallCompressCount        = 30     // Number of tool calls to compress into refs
-
-	// Calculated thresholds
-	contextCompactThreshold   = int64(float64(contextWindowLimit) * contextCompactThresholdPct)
-	contextSummarizeThreshold = int64(float64(contextWindowLimit) * contextSummarizeThresholdPct)
-)
-
 type AgentConfig struct {
 	RootCtx context.Context
+
+	// The provider to use.
+	Provider string
 
 	// The model to use.
 	Model string
 
 	ResumeSessionId string
 }
-
-type ThinkingState string
-
-const (
-	ThinkingStateThinking ThinkingState = "thinking"
-	ThinkingStateDone     ThinkingState = "done"
-)
 
 type Agent struct {
 	c AgentConfig
@@ -120,6 +99,7 @@ func (a *Agent) registerTools() {
 	a.RegisterTool(tools.LoadRef())
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))
+	a.RegisterTool(tools.WebFetch())
 }
 
 func (a *Agent) RegisterTool(tool tool.Invoker) {
@@ -178,10 +158,15 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 	if err != nil {
 		return nil, err
 	}
+	providerCfg := config.GetConfig().Providers[a.c.Provider]
 	r := schema.NewRequest(a.c.Model, msgList)
-	r.Temperature = modelTemperature
-	r.MaxTokens = maxTokenAllowed
-	r.Thinking = schema.EnableThinking()
+	r.Temperature = providerCfg.Temperature
+	r.MaxTokens = int64(providerCfg.MaxTokens)
+	if providerCfg.IsThinkingEnabled() {
+		r.Thinking = schema.EnableThinking()
+	} else {
+		r.Thinking = schema.DisableThinking()
+	}
 	r.Tools = a.buildLLMToolParams()
 
 	a.cachedReqsMu.Lock()
@@ -193,14 +178,16 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 
 // checkAndCompactContext checks current context size and applies compression if needed
 func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) error {
+	providerCfg := config.GetConfig().Providers[a.c.Provider]
 	currentTokens := a.GetCurrentContextTokens(msg.Channel, msg.ChatId)
 
+	contextCompactThreshold := providerCfg.GetContextCompactThreshold()
 	if currentTokens < contextCompactThreshold {
 		return nil
 	}
 
 	// Step 1: Try compressing tool calls to refs
-	compressed, err := a.contextMgr.CompressToolCalls(msg.Channel, msg.ChatId, toolCallCompressCount)
+	compressed, err := a.contextMgr.CompressToolCalls(msg.Channel, msg.ChatId, providerCfg.ToolCallCompressThreshold)
 	if err != nil {
 		return fmt.Errorf("failed to compress tool calls: %w", err)
 	}
@@ -210,6 +197,7 @@ func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) er
 	}
 
 	// Step 2: If over 80% threshold after compression, summarize history
+	contextSummarizeThreshold := providerCfg.GetContextSummarizeThreshold()
 	if currentTokens >= contextSummarizeThreshold {
 		err = a.contextMgr.SummarizeHistory(ctx, msg.Channel, msg.ChatId, a.summarizeMessagesWithLLM)
 		if err != nil {
@@ -228,8 +216,9 @@ func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []schema.
 	}
 	summaryMsg = append(summaryMsg, messages...)
 
+	providerCfg := config.GetConfig().Providers[a.c.Provider]
 	req := schema.NewRequest(a.c.Model, summaryMsg)
-	req.Temperature = modelTemperature
+	req.Temperature = providerCfg.Temperature
 	req.MaxTokens = 2000
 
 	resp, err := a.llm.ChatCompletion(ctx, req)

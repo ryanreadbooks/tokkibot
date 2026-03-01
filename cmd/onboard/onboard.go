@@ -9,7 +9,6 @@ import (
 	"github.com/ryanreadbooks/tokkibot/workspace"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var OnboardCmd = &cobra.Command{
@@ -44,7 +43,7 @@ func bootstrapConfig(configPath string) error {
 	}
 
 	cfg := config.BootstrapConfig()
-	output, err := yaml.Marshal(cfg)
+	output, err := cfg.ToYaml()
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

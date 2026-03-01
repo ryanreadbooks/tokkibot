@@ -179,6 +179,62 @@ Execute a skill script:
 - Use `activate` first to understand what a skill offers before using other actions
 - Only use skills that have been explicitly loaded or listed as available
 
+## web_fetch
+
+Fetch content from a URL and convert it to a readable format. Automatically handles different content types with intelligent processing.
+
+**Parameters:**
+
+- `url` (required): The URL to fetch (must be http:// or https://)
+
+**Example:**
+
+```json
+{
+	"url": "https://example.com/page"
+}
+```
+
+**Output format:**
+
+```json
+{
+	"content": "The fetched content (text or base64url-encoded binary)",
+	"truncated": false,
+	"is_binary": false,
+	"content_type": "text/html; charset=utf-8",
+	"status_code": 200
+}
+```
+
+- `content`: The fetched content (text or base64url-encoded binary)
+- `truncated`: Boolean indicating if content was truncated (max 50000 characters)
+- `is_binary`: Boolean indicating if content is binary data
+- `content_type`: The Content-Type header from response
+- `status_code`: The HTTP status code (200, 404, etc.)
+
+**Behavior by content type:**
+
+- **HTML** (`text/html`): Converted to markdown format, `<script>` and `<style>` tags removed, excessive newlines cleaned
+- **Text formats**: Plain text, XML, CSS, JavaScript, YAML returned as-is
+- **JSON** (`application/json`): Returned as-is
+- **Binary** (images, PDFs, etc.): Returned as base64url-encoded string with `is_binary: true`
+
+**Safety limits:**
+
+- Maximum timeout: 30 seconds
+- Maximum redirects: 5
+- Maximum content size: 10MB
+- Output truncated if exceeds 50000 characters
+- HTTP errors (4xx, 5xx) return error message
+
+**Notes:**
+
+- Only supports http:// and https:// schemes
+- Automatically detects content type if not provided by server
+- HTML converted to markdown for easier reading and processing
+- Binary data encoded as base64url for safe transmission
+
 ## Tool Usage Guidelines
 
 1. **Prefer specific tools over shell**: Use `read_file`, `write_file`, `list_dir` instead of shell equivalents like `cat`, `echo >`, `ls` when possible.
