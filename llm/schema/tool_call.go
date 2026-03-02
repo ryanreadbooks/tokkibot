@@ -1,5 +1,7 @@
 package schema
 
+import "github.com/ryanreadbooks/tokkibot/llm/schema/param"
+
 type ToolCallType string
 
 const (
@@ -12,9 +14,9 @@ type CompletionToolCall struct {
 	Function CompletionToolCallFunction `json:"function" mapstructure:"function"`
 }
 
-func (t *CompletionToolCall) ToToolCallParam() *ToolCallParam {
-	return &ToolCallParam{
-		Function: &ToolCallFunctionParam{
+func (t *CompletionToolCall) ToToolCall() *param.ToolCall {
+	return &param.ToolCall{
+		Function: &param.ToolCallFunction{
 			Id:        t.Id,
 			Name:      t.Function.Name,
 			Arguments: t.Function.Arguments,

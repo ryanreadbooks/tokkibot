@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 var regMediaRef = regexp.MustCompile(`\[image\]\((@medias/[^)]+)\)`)
@@ -69,7 +69,7 @@ func (b *baseLog) initFile(workspace string, flags int) error {
 }
 
 // createLogItem creates a new log item with the given role and message
-func (b *baseLog) createLogItem(role schema.Role, msg *schema.MessageParam) LogItem {
+func (b *baseLog) createLogItem(role param.Role, msg *param.Message) LogItem {
 	return LogItem{
 		Id:      NewLogItemId(),
 		Role:    role,

@@ -15,7 +15,8 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent/ref/media"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/config"
-	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 	"github.com/ryanreadbooks/tokkibot/pkg/dataurl"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
@@ -39,7 +40,7 @@ type ContextManager struct {
 	systemPrompts string
 
 	historyInjectOnce sync.Once
-	messageList       []schema.MessageParam
+	messageList       []param.Message
 	aofLogManager     *session.AOFLogManager
 	contextLogManager *session.ContextLogManager
 	memoryMgr         *MemoryManager
@@ -152,7 +153,7 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	c.systemPrompts = c.renderPrompts(c.systemPrompts)
 	// the first one is system prompt
 	c.messageList = append(c.messageList,
-		schema.NewSystemMessageParam(c.systemPrompts),
+		param.NewSystemMessage(c.systemPrompts),
 	)
 
 	return nil
@@ -177,9 +178,9 @@ func (c *ContextManager) InitFromSessionLogs(channel, chatId string) {
 // appendMessage is a helper to add a message to both logs
 func (c *ContextManager) appendMessage(
 	channel, chatId string,
-	msgParam *schema.MessageParam,
-	addToAOF func(*session.AOFLog, *schema.MessageParam) error,
-	addToContext func(*session.ContextLog, *schema.MessageParam) error,
+	msgParam *param.Message,
+	addToAOF func(*session.AOFLog, *param.Message) error,
+	addToContext func(*session.ContextLog, *param.Message) error,
 ) error {
 	contextLog, err := c.contextLogManager.GetOrCreate(channel, chatId)
 	if err != nil {
@@ -201,20 +202,20 @@ func (c *ContextManager) appendMessage(
 	return nil
 }
 
-type contentUnionParamWithKey struct {
-	*schema.ContentUnionParam
+type contentUnionWithKey struct {
+	*param.ContentUnion
 	Key string
 }
 
-func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionParamWithKey, error) {
-	params := make([]*contentUnionParamWithKey, 0, len(attachments))
+func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionWithKey, error) {
+	params := make([]*contentUnionWithKey, 0, len(attachments))
 	for _, attachment := range attachments {
 		switch attachment.Type {
 		case ImageAttachment:
 			data := dataurl.Base64Encode(attachment.Data)
-			params = append(params, &contentUnionParamWithKey{
-				ContentUnionParam: &schema.ContentUnionParam{
-					ImageURL: &schema.ImageURLParam{
+			params = append(params, &contentUnionWithKey{
+				ContentUnion: &param.ContentUnion{
+					ImageURL: &param.ImageURL{
 						URL: data,
 					},
 				},
@@ -222,9 +223,9 @@ func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionP
 			})
 		case FileAttachment:
 			// we consider file attachment as text string content if it is a file
-			params = append(params, &contentUnionParamWithKey{
-				ContentUnionParam: &schema.ContentUnionParam{
-					Text: &schema.TextParam{
+			params = append(params, &contentUnionWithKey{
+				ContentUnion: &param.ContentUnion{
+					Text: &param.Text{
 						Value: xstring.FromBytes(attachment.Data),
 					},
 				},
@@ -238,7 +239,7 @@ func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionP
 	return params, nil
 }
 
-func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]schema.MessageParam, error) {
+func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]param.Message, error) {
 	// check any attachments
 	unionParamsWithKey, err := parseInputAttachments(inMsg.Attachments)
 	if err != nil {
@@ -247,14 +248,14 @@ func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]schema.MessagePa
 
 	logItem := session.LogItem{
 		Id:      session.NewLogItemId(),
-		Role:    schema.RoleUser,
+		Role:    param.RoleUser,
 		Created: time.Now().Unix(),
 		Metadata: &session.LogItemMeta{
 			ImageRef: map[int]string{},
 		},
 	}
 
-	var msgParam schema.MessageParam
+	var msgParam param.Message
 	if len(unionParamsWithKey) > 0 {
 		for idx, un := range unionParamsWithKey {
 			if un != nil && un.ImageURL != nil && un.ImageURL.URL != "" && un.Key != "" {
@@ -265,24 +266,24 @@ func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]schema.MessagePa
 			}
 		}
 
-		unionParams := make([]*schema.ContentUnionParam, 0, len(unionParamsWithKey))
+		unionParams := make([]*param.ContentUnion, 0, len(unionParamsWithKey))
 		for _, un := range unionParamsWithKey {
-			unionParams = append(unionParams, un.ContentUnionParam)
+			unionParams = append(unionParams, un.ContentUnion)
 		}
 
-		msgParam = schema.NewUserMessageParam(unionParams)
+		msgParam = param.NewUserMessage(unionParams)
 	} else {
-		msgParam = schema.NewUserMessageParam(inMsg.Content)
+		msgParam = param.NewUserMessage(inMsg.Content)
 	}
 
 	logItem.Message = &msgParam
 
 	err = c.appendMessage(
 		inMsg.Channel, inMsg.ChatId, &msgParam,
-		func(aofLog *session.AOFLog, msg *schema.MessageParam) error {
+		func(aofLog *session.AOFLog, msg *param.Message) error {
 			return aofLog.AddLogItem(logItem)
 		},
-		func(contextLog *session.ContextLog, msg *schema.MessageParam) error {
+		func(contextLog *session.ContextLog, msg *param.Message) error {
 			return contextLog.AddLogItem(logItem)
 		},
 	)
@@ -299,20 +300,20 @@ func (c *ContextManager) AppendToolResult(
 	toolCall *schema.CompletionToolCall,
 	result string,
 ) error {
-	msgParam := schema.NewToolMessageParam(toolCall.Id, result)
+	msgParam := param.NewToolMessage(toolCall.Id, result)
 	logItem := session.LogItem{
 		Id:      session.NewLogItemId(),
-		Role:    schema.RoleTool,
+		Role:    param.RoleTool,
 		Created: time.Now().Unix(),
 		Message: &msgParam,
 	}
 
 	return c.appendMessage(
 		inMsg.Channel, inMsg.ChatId, &msgParam,
-		func(log *session.AOFLog, msg *schema.MessageParam) error {
+		func(log *session.AOFLog, msg *param.Message) error {
 			return log.AddLogItem(logItem)
 		},
-		func(log *session.ContextLog, msg *schema.MessageParam) error {
+		func(log *session.ContextLog, msg *param.Message) error {
 			return log.AddLogItem(logItem)
 		},
 	)
@@ -323,35 +324,35 @@ func (c *ContextManager) AppendAssistantMessage(
 	inMsg *UserInput,
 	msg *schema.CompletionMessage,
 ) error {
-	var reasoningContent *schema.StringParam
+	var reasoningContent *param.String
 	if msg.ReasoningContent != "" {
-		reasoningContent = &schema.StringParam{Value: msg.ReasoningContent}
+		reasoningContent = &param.String{Value: msg.ReasoningContent}
 	}
-	msgParam := schema.NewAssistantMessageParam(
+	msgParam := param.NewAssistantMessage(
 		msg.Content,
-		msg.GetToolCallParams(),
+		msg.GetToolCalls(),
 		reasoningContent,
 	)
 	logItem := session.LogItem{
 		Id:      session.NewLogItemId(),
-		Role:    schema.RoleAssistant,
+		Role:    param.RoleAssistant,
 		Created: time.Now().Unix(),
 		Message: &msgParam,
 	}
 
 	return c.appendMessage(
 		inMsg.Channel, inMsg.ChatId, &msgParam,
-		func(log *session.AOFLog, msg *schema.MessageParam) error {
+		func(log *session.AOFLog, msg *param.Message) error {
 			return log.AddLogItem(logItem)
 		},
-		func(log *session.ContextLog, msg *schema.MessageParam) error {
+		func(log *session.ContextLog, msg *param.Message) error {
 			return log.AddLogItem(logItem)
 		},
 	)
 }
 
 func (c *ContextManager) GetMessageContext(channel, chatId string) (
-	[]schema.MessageParam, error,
+	[]param.Message, error,
 ) {
 	log, err := c.contextLogManager.GetOrCreate(channel, chatId)
 	if err != nil {
@@ -360,7 +361,7 @@ func (c *ContextManager) GetMessageContext(channel, chatId string) (
 
 	// In-memory logs already contain actual content (refs are only used for disk storage)
 	logs := log.GetLogs()
-	msgList := make([]schema.MessageParam, 0, len(logs))
+	msgList := make([]param.Message, 0, len(logs))
 	for _, log := range logs {
 		msgList = append(msgList, *log.Message)
 	}
@@ -416,7 +417,7 @@ func (c *ContextManager) CompressToolCalls(channel, chatId string, count int) (i
 func (c *ContextManager) SummarizeHistory(
 	ctx context.Context,
 	channel, chatId string,
-	llmFunc func(context.Context, []schema.MessageParam) (string, error),
+	llmFunc func(context.Context, []param.Message) (string, error),
 ) error {
 	contextLog, err := c.contextLogManager.GetOrCreate(channel, chatId)
 	if err != nil {
@@ -450,12 +451,12 @@ func (c *ContextManager) SummarizeHistory(
 		}
 
 		prevMsg := logs[endIdx-1].Message
-		if prevMsg.Role() == schema.RoleAssistant &&
-			prevMsg.AssistantMessageParam != nil &&
-			len(prevMsg.AssistantMessageParam.ToolCalls) > 0 {
+		if prevMsg.Role() == param.RoleAssistant &&
+			prevMsg.Assistant != nil &&
+			len(prevMsg.Assistant.ToolCalls) > 0 {
 			// Need to include following tool responses
 			toolCallIds := make(map[string]bool)
-			for _, tc := range prevMsg.AssistantMessageParam.ToolCalls {
+			for _, tc := range prevMsg.Assistant.ToolCalls {
 				if tc.Function != nil {
 					toolCallIds[tc.Function.Id] = true
 				}
@@ -465,12 +466,12 @@ func (c *ContextManager) SummarizeHistory(
 			matched := 0
 			for j := endIdx; j < len(logs) && matched < len(toolCallIds); j++ {
 				msg := logs[j].Message
-				if msg.Role() == schema.RoleTool && msg.ToolMessageParam != nil {
-					if toolCallIds[msg.ToolMessageParam.ToolCallId] {
+				if msg.Role() == param.RoleTool && msg.Tool != nil {
+					if toolCallIds[msg.Tool.ToolCallId] {
 						matched++
 						endIdx = j + 1
 					}
-				} else if msg.Role() == schema.RoleAssistant {
+				} else if msg.Role() == param.RoleAssistant {
 					// Stop if we hit another assistant message
 					break
 				}
@@ -483,13 +484,13 @@ func (c *ContextManager) SummarizeHistory(
 
 	// Ensure startIdx doesn't begin with orphaned tool messages
 	// If first message is a tool message, find its corresponding assistant message
-	if startIdx < endIdx && logs[startIdx].Message.Role() == schema.RoleTool {
+	if startIdx < endIdx && logs[startIdx].Message.Role() == param.RoleTool {
 		// Scan backward to find the assistant message with tool_calls
 		for i := startIdx - 1; i >= 0; i-- {
 			msg := logs[i].Message
-			if msg.Role() == schema.RoleAssistant &&
-				msg.AssistantMessageParam != nil &&
-				len(msg.AssistantMessageParam.ToolCalls) > 0 {
+			if msg.Role() == param.RoleAssistant &&
+				msg.Assistant != nil &&
+				len(msg.Assistant.ToolCalls) > 0 {
 				// Found the assistant message, include it
 				startIdx = i
 				break
@@ -498,7 +499,7 @@ func (c *ContextManager) SummarizeHistory(
 
 		// If we still start with a tool message (couldn't find assistant msg),
 		// skip orphaned tool messages
-		for startIdx < endIdx && logs[startIdx].Message.Role() == schema.RoleTool {
+		for startIdx < endIdx && logs[startIdx].Message.Role() == param.RoleTool {
 			startIdx++
 		}
 	}
@@ -508,7 +509,7 @@ func (c *ContextManager) SummarizeHistory(
 		return nil
 	}
 
-	toSummarize := make([]schema.MessageParam, 0, endIdx-startIdx)
+	toSummarize := make([]param.Message, 0, endIdx-startIdx)
 	for i := startIdx; i < endIdx; i++ {
 		toSummarize = append(toSummarize, *logs[i].Message)
 	}
@@ -521,10 +522,10 @@ func (c *ContextManager) SummarizeHistory(
 
 	// Create new message list: summary + recent messages
 	// Note: system prompt is managed separately, not in contextLog
-	newMsgList := make([]schema.MessageParam, 0, 1+recentKeepCount)
+	newMsgList := make([]param.Message, 0, 1+recentKeepCount)
 
 	// Add summary as user message
-	summaryMsg := schema.NewUserMessageParam(
+	summaryMsg := param.NewUserMessage(
 		fmt.Sprintf("[Conversation History Summary]\n%s\n[End of Summary, Recent Messages Follow]", summary),
 	)
 	newMsgList = append(newMsgList, summaryMsg)
@@ -535,7 +536,7 @@ func (c *ContextManager) SummarizeHistory(
 	}
 
 	// Update context log with new messages
-	contextLog.ResetLogsFromParam(newMsgList)
+	contextLog.ResetLogsFromMessage(newMsgList)
 
 	// Flush to disk
 	if err := contextLog.Flush(c.contextLogManager.Workspace); err != nil {

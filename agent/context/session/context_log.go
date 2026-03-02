@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/ryanreadbooks/tokkibot/agent/ref"
-	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 // this is the log file for LLM context building
@@ -64,13 +64,13 @@ func (s *ContextLog) GetLogs() []LogItem {
 	return s.logs
 }
 
-// ResetLogsFromParam resets the in-memory logs with new params
-func (s *ContextLog) ResetLogsFromParam(params []schema.MessageParam) {
+// ResetLogsFromMessage resets the in-memory logs with new messages
+func (s *ContextLog) ResetLogsFromMessage(messages []param.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	newLogs := make([]LogItem, 0, len(params))
-	for _, p := range params {
+	newLogs := make([]LogItem, 0, len(messages))
+	for _, p := range messages {
 		msg := p
 		newLogs = append(newLogs, s.baseLog.createLogItem(p.Role(), &msg))
 	}
@@ -123,9 +123,9 @@ func (s *ContextLog) CompressToolCalls(count int) (int, error) {
 			break
 		}
 
-		if s.logs[i].Role == schema.RoleTool {
-			if s.logs[i].Message != nil && s.logs[i].Message.ToolMessageParam != nil {
-				toolMsg := s.logs[i].Message.ToolMessageParam
+		if s.logs[i].Role == param.RoleTool {
+			if s.logs[i].Message != nil && s.logs[i].Message.Tool != nil {
+				toolMsg := s.logs[i].Message.Tool
 				originalContent := toolMsg.GetContent()
 
 				// Skip if already a ref or content is too short
@@ -142,7 +142,7 @@ func (s *ContextLog) CompressToolCalls(count int) (int, error) {
 					}
 
 					// Update message to use ref
-					toolMsg.String = &schema.StringParam{
+					toolMsg.String = &param.String{
 						Value: refName + " (use load_ref tool to read full content)",
 					}
 					toolMsg.Texts = nil
@@ -162,9 +162,9 @@ func (s *ContextLog) GetUncompressedToolCallCount() int {
 
 	count := 0
 	for i := range s.logs {
-		if s.logs[i].Role == schema.RoleTool {
-			if s.logs[i].Message != nil && s.logs[i].Message.ToolMessageParam != nil {
-				content := s.logs[i].Message.ToolMessageParam.GetContent()
+		if s.logs[i].Role == param.RoleTool {
+			if s.logs[i].Message != nil && s.logs[i].Message.Tool != nil {
+				content := s.logs[i].Message.Tool.GetContent()
 				// Count messages > 500 chars that are not already refs
 				if len(content) > 500 && !isAlreadyRef(content) {
 					count++

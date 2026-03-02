@@ -7,6 +7,7 @@ import (
 
 	"github.com/ryanreadbooks/tokkibot/llm"
 	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -48,13 +49,13 @@ func New(config Config) (*OpenAI, error) {
 	}, nil
 }
 
-func toSystemMessageParamUnion(param *schema.SystemMessageParam) *openai.ChatCompletionSystemMessageParam {
-	if param != nil {
+func toSystemMessage(p *param.SystemMessage) *openai.ChatCompletionSystemMessageParam {
+	if p != nil {
 		union := &openai.ChatCompletionSystemMessageParam{}
-		if param.String != nil {
-			union.Content.OfString = openaiparam.NewOpt(param.String.Value)
+		if p.String != nil {
+			union.Content.OfString = openaiparam.NewOpt(p.String.Value)
 		}
-		for _, text := range param.Text {
+		for _, text := range p.Text {
 			if text != nil {
 				union.Content.OfArrayOfContentParts = append(
 					union.Content.OfArrayOfContentParts, openai.ChatCompletionContentPartTextParam{
@@ -69,14 +70,14 @@ func toSystemMessageParamUnion(param *schema.SystemMessageParam) *openai.ChatCom
 	return nil
 }
 
-func toUserMessageParamUnion(param *schema.UserMessageParam) *openai.ChatCompletionUserMessageParam {
-	if param != nil {
+func toUserMessage(p *param.UserMessage) *openai.ChatCompletionUserMessageParam {
+	if p != nil {
 		union := &openai.ChatCompletionUserMessageParam{}
-		if param.String != nil {
-			union.Content.OfString = openaiparam.NewOpt(param.String.Value)
+		if p.String != nil {
+			union.Content.OfString = openaiparam.NewOpt(p.String.Value)
 		}
 
-		for _, contentPart := range param.ContentParts {
+		for _, contentPart := range p.ContentParts {
 			if contentPart != nil {
 				if contentPart.Text != nil {
 					union.Content.OfArrayOfContentParts = append(
@@ -109,13 +110,13 @@ func toUserMessageParamUnion(param *schema.UserMessageParam) *openai.ChatComplet
 	return nil
 }
 
-func toAssistantMessageParamUnion(param *schema.AssistantMessageParam) *openai.ChatCompletionAssistantMessageParam {
-	if param != nil {
+func toAssistantMessage(p *param.AssistantMessage) *openai.ChatCompletionAssistantMessageParam {
+	if p != nil {
 		union := &openai.ChatCompletionAssistantMessageParam{}
-		if param.Content != nil {
-			union.Content.OfString = openaiparam.NewOpt(param.Content.Value)
+		if p.Content != nil {
+			union.Content.OfString = openaiparam.NewOpt(p.Content.Value)
 		}
-		for _, text := range param.Texts {
+		for _, text := range p.Texts {
 			if text != nil {
 				union.Content.OfArrayOfContentParts = append(
 					union.Content.OfArrayOfContentParts,
@@ -127,7 +128,7 @@ func toAssistantMessageParamUnion(param *schema.AssistantMessageParam) *openai.C
 				)
 			}
 		}
-		for _, tc := range param.ToolCalls {
+		for _, tc := range p.ToolCalls {
 			if tc != nil && tc.Function != nil {
 				union.ToolCalls = append(
 					union.ToolCalls,
@@ -150,15 +151,15 @@ func toAssistantMessageParamUnion(param *schema.AssistantMessageParam) *openai.C
 	return nil
 }
 
-func toToolMessageParamUnion(param *schema.ToolMessageParam) *openai.ChatCompletionToolMessageParam {
-	if param != nil {
+func toToolMessage(p *param.ToolMessage) *openai.ChatCompletionToolMessageParam {
+	if p != nil {
 		union := &openai.ChatCompletionToolMessageParam{
-			ToolCallID: param.ToolCallId,
+			ToolCallID: p.ToolCallId,
 		}
-		if param.String != nil {
-			union.Content.OfString = openaiparam.NewOpt(param.String.Value)
+		if p.String != nil {
+			union.Content.OfString = openaiparam.NewOpt(p.String.Value)
 		}
-		for _, text := range param.Texts {
+		for _, text := range p.Texts {
 			if text != nil {
 				union.Content.OfArrayOfContentParts = append(union.Content.OfArrayOfContentParts,
 					openai.ChatCompletionContentPartTextParam{
@@ -173,25 +174,25 @@ func toToolMessageParamUnion(param *schema.ToolMessageParam) *openai.ChatComplet
 	return nil
 }
 
-func toChatCompletionMessageParamUnion(param *schema.MessageParam) openai.ChatCompletionMessageParamUnion {
+func toChatCompletionMessage(msg *param.Message) openai.ChatCompletionMessageParamUnion {
 	union := openai.ChatCompletionMessageParamUnion{
-		OfSystem:    toSystemMessageParamUnion(param.SystemMessageParam),
-		OfUser:      toUserMessageParamUnion(param.UserMessageParam),
-		OfAssistant: toAssistantMessageParamUnion(param.AssistantMessageParam),
-		OfTool:      toToolMessageParamUnion(param.ToolMessageParam),
+		OfSystem:    toSystemMessage(msg.System),
+		OfUser:      toUserMessage(msg.User),
+		OfAssistant: toAssistantMessage(msg.Assistant),
+		OfTool:      toToolMessage(msg.Tool),
 	}
 
 	return union
 }
 
-func toToolParamUnion(param *schema.ToolParam) openai.ChatCompletionToolUnionParam {
+func toTool(p *param.Tool) openai.ChatCompletionToolUnionParam {
 	tool := openai.ChatCompletionToolUnionParam{}
-	if param.Definition != nil {
+	if p.Definition != nil {
 		tool.OfFunction = &openai.ChatCompletionFunctionToolParam{
 			Function: shared.FunctionDefinitionParam{
-				Name:        param.Definition.Name,
-				Description: openaiparam.NewOpt(param.Definition.Description),
-				Parameters:  param.Parameters,
+				Name:        p.Definition.Name,
+				Description: openaiparam.NewOpt(p.Definition.Description),
+				Parameters:  p.Parameters,
 			},
 		}
 	}
@@ -220,15 +221,15 @@ func toChatCompletionNewParams(req *schema.Request) (openai.ChatCompletionNewPar
 	// attach reasoning content if necessary in request body in json format
 	// cuz this openai-sdk does not support setting reasoning_content in assistant message param
 	for idx, message := range req.Messages {
-		params.Messages = append(params.Messages, toChatCompletionMessageParamUnion(&message))
-		if message.AssistantMessageParam != nil && message.AssistantMessageParam.ReasoningContent != nil {
+		params.Messages = append(params.Messages, toChatCompletionMessage(&message))
+		if message.Assistant != nil && message.Assistant.ReasoningContent != nil {
 			jsonKey := fmt.Sprintf("messages.%d.reasoning_content", idx)
-			opts = append(opts, option.WithJSONSet(jsonKey, message.AssistantMessageParam.ReasoningContent.Value))
+			opts = append(opts, option.WithJSONSet(jsonKey, message.Assistant.ReasoningContent.Value))
 		}
 	}
 
 	for _, tool := range req.Tools {
-		params.Tools = append(params.Tools, toToolParamUnion(&tool))
+		params.Tools = append(params.Tools, toTool(&tool))
 	}
 
 	if req.Thinking != nil {

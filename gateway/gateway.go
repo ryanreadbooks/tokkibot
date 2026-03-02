@@ -10,6 +10,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent"
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/pkg/misc"
 )
 
 type Gateway struct {
@@ -75,11 +76,11 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 		case <-ctx.Done():
 			slog.Info("message worker stopped", "adapter", adapter.Type(), "reason", ctx.Err())
 			return
-		case msg := <-adapter.ReceiveChan():
-			slog.Info("received message", "adapter", adapter.Type(), "message", msg)
+		case rawMsg := <-adapter.ReceiveChan():
+			slog.Info("received message", "adapter", adapter.Type(), "message", rawMsg)
 
 			g.poolMu.Lock()
-			poolKey := fmt.Sprintf("%s:%s", msg.Channel, msg.ChatId)
+			poolKey := fmt.Sprintf("%s:%s", rawMsg.Channel, rawMsg.ChatId)
 			pool, ok := g.pools[poolKey]
 			if !ok {
 				pool, _ = ants.NewPool(1) // IMPORTANT: make sure one channel one chat is handled by one goroutine
@@ -87,35 +88,73 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 			}
 			g.poolMu.Unlock()
 
-			pool.Submit(func() {
-				attachments := make([]*agent.UserMessageAttachment, 0, len(msg.Attachments))
-				for _, attachment := range msg.Attachments {
-					attachments = append(attachments, &agent.UserMessageAttachment{
-						Key:  attachment.Key,
-						Type: agent.AttachmentType(attachment.Type),
-						Data: attachment.Data,
-					})
-				}
-				result := g.agent.Ask(msg.Context(), &agent.UserMessage{
-					Channel:     adapter.Type().String(),
-					ChatId:      msg.ChatId,
-					Content:     msg.Content,
-					Created:     msg.Created,
-					Attachments: attachments,
-				})
+			attachments := extractAttachments(rawMsg)
+			userMessage := &agent.UserMessage{
+				Channel:     adapter.Type().String(),
+				ChatId:      rawMsg.ChatId,
+				Content:     rawMsg.Content,
+				Created:     rawMsg.Created,
+				Attachments: attachments,
+			}
 
-				// send result back to adapter
-				select {
-				case adapter.SendChan() <- &chmodel.OutgoingMessage{
-					SenderId: msg.SenderId,
-					Channel:  msg.Channel,
-					ChatId:   msg.ChatId,
-					Content:  result,
-					Metadata: msg.Metadata,
-				}:
-				default:
+			pool.Submit(func() {
+				if rawMsg.Stream {
+					g.workerDoStream(rawMsg, userMessage, adapter)
+				} else {
+					g.workerDo(rawMsg, userMessage, adapter)
 				}
 			})
+		}
+	}
+}
+
+func (g *Gateway) workerDo(
+	rawMsg *chmodel.IncomingMessage,
+	userMessage *agent.UserMessage,
+	adapter chadapter.Adapter,
+) {
+	result := g.agent.Ask(rawMsg.Context(), userMessage)
+
+	// send result back to adapter
+	select {
+	case adapter.SendChan() <- &chmodel.OutgoingMessage{
+		SenderId: rawMsg.SenderId,
+		Channel:  rawMsg.Channel,
+		ChatId:   rawMsg.ChatId,
+		Content:  result,
+		Metadata: rawMsg.Metadata,
+	}:
+	default:
+	}
+}
+
+func (g *Gateway) workerDoStream(
+	rawMsg *chmodel.IncomingMessage,
+	userMessage *agent.UserMessage,
+	_ chadapter.Adapter,
+) {
+	streamResult := g.agent.AskStream(rawMsg.Context(), userMessage)
+	if rawMsg.StreamTool() == nil {
+		misc.DiscardChan(streamResult.ToolCall)
+	} else {
+		// send to tool call output channel
+		for tool := range streamResult.ToolCall {
+			rawMsg.StreamTool() <- &chmodel.StreamTool{
+				Name:      tool.Name,
+				Arguments: tool.Arguments,
+			}
+		}
+	}
+
+	if rawMsg.StreamContent() == nil {
+		misc.DiscardChan(streamResult.Content)
+	} else {
+		// send content to output channel
+		for content := range streamResult.Content {
+			rawMsg.StreamContent() <- &chmodel.StreamContent{
+				Content:          content.Content,
+				ReasoningContent: content.ReasoningContent,
+			}
 		}
 	}
 }

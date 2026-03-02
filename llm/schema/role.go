@@ -1,30 +1,12 @@
 package schema
 
-type Role string
+import "github.com/ryanreadbooks/tokkibot/llm/schema/param"
+
+type Role = param.Role
 
 const (
-	RoleSystem    Role = "system"
-	RoleUser      Role = "user"
-	RoleAssistant Role = "assistant"
-	RoleTool      Role = "tool"
+	RoleSystem    = param.RoleSystem
+	RoleUser      = param.RoleUser
+	RoleAssistant = param.RoleAssistant
+	RoleTool      = param.RoleTool
 )
-
-func (r Role) String() string {
-	return string(r)
-}
-
-func (r Role) System() bool {
-	return r == RoleSystem
-}
-
-func (r Role) User() bool {
-	return r == RoleUser
-}
-
-func (r Role) Assistant() bool {
-	return r == RoleAssistant
-}
-
-func (r Role) Tool() bool {
-	return r == RoleTool
-}

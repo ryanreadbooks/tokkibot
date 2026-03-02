@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jinzhu/copier"
 	"github.com/ryanreadbooks/tokkibot/agent/ref/media"
-	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 func NewLogItemId() string {
@@ -18,11 +18,11 @@ func NewLogItemId() string {
 
 // LogItem every messages into session file
 type LogItem struct {
-	Id       string               `json:"id"` // unique msg id
-	Role     schema.Role          `json:"role"`
-	Created  int64                `json:"created"`
-	Message  *schema.MessageParam `json:"message,omitzero"`
-	Metadata *LogItemMeta         `json:"metadata,omitzero"`
+	Id       string         `json:"id"` // unique msg id
+	Role     param.Role     `json:"role"`
+	Created  int64          `json:"created"`
+	Message  *param.Message `json:"message,omitzero"`
+	Metadata *LogItemMeta   `json:"metadata,omitzero"`
 }
 
 type LogItemMeta struct {
@@ -39,9 +39,9 @@ func (i *LogItem) MarshalJSON() ([]byte, error) {
 	var copied LogItem
 	copier.CopyWithOption(&copied, i, copier.Option{DeepCopy: true})
 
-	if copied.Message != nil && copied.Message.UserMessageParam != nil &&
-		len(copied.Message.UserMessageParam.ContentParts) > 0 {
-		for idx, part := range copied.Message.UserMessageParam.ContentParts {
+	if copied.Message != nil && copied.Message.User != nil &&
+		len(copied.Message.User.ContentParts) > 0 {
+		for idx, part := range copied.Message.User.ContentParts {
 			if part == nil {
 				continue
 			}
@@ -66,17 +66,17 @@ func (i *LogItem) UnmarshalJSON(data []byte) error {
 	}
 
 	if !i.Role.User() || !i.HasImageRef() ||
-		i.Message == nil || i.Message.UserMessageParam == nil ||
-		len(i.Message.UserMessageParam.ContentParts) == 0 {
+		i.Message == nil || i.Message.User == nil ||
+		len(i.Message.User.ContentParts) == 0 {
 		return nil
 	}
 
-	for _, part := range i.Message.UserMessageParam.ContentParts {
+	for _, part := range i.Message.User.ContentParts {
 		if part == nil {
 			continue
 		}
 
-		// expand ref: [image](@medias/xxx) -> data
+		// expand ref: [image](@media/xxx) -> data
 		matches := regMediaRef.FindStringSubmatch(part.ImageURL.URL)
 		if len(matches) > 0 {
 			refName := matches[1]
@@ -95,15 +95,15 @@ func (msg *LogItem) HasImageRef() bool {
 }
 
 func (msg *LogItem) IsFromUser() bool {
-	return msg.Role == schema.RoleUser
+	return msg.Role == param.RoleUser
 }
 
 func (msg *LogItem) IsFromAssistant() bool {
-	return msg.Role == schema.RoleAssistant
+	return msg.Role == param.RoleAssistant
 }
 
 func (msg *LogItem) IsFromTool() bool {
-	return msg.Role == schema.RoleTool
+	return msg.Role == param.RoleTool
 }
 
 func (msg *LogItem) Json() string {

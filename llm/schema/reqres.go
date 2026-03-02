@@ -1,16 +1,18 @@
 package schema
 
+import "github.com/ryanreadbooks/tokkibot/llm/schema/param"
+
 // The request sent to the LLM service.
 type Request struct {
 	Model    string
-	Messages []MessageParam
+	Messages []param.Message
 
 	// -1 means using model defaults
 	Temperature float64
 
 	// -1 means using model defaults
 	MaxTokens int64
-	Tools     []ToolParam
+	Tools     []param.Tool
 
 	// number of responses to generate, default to 1
 	N int64
@@ -18,7 +20,7 @@ type Request struct {
 	Thinking *Thinking
 }
 
-func NewRequest(model string, messages []MessageParam) *Request {
+func NewRequest(model string, messages []param.Message) *Request {
 	return &Request{
 		Model:       model,
 		Messages:    messages,

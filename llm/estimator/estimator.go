@@ -77,20 +77,20 @@ func (RoughEstimator) Estimate(_ context.Context, req *schema.Request) (int, err
 	var total int
 
 	for _, msg := range req.Messages {
-		if msg.SystemMessageParam != nil {
-			total += EstimateToken(msg.SystemMessageParam.GetContent())
+		if msg.System != nil {
+			total += EstimateToken(msg.System.GetContent())
 		}
 
-		if msg.UserMessageParam != nil {
-			total += EstimateToken(msg.UserMessageParam.GetContent())
+		if msg.User != nil {
+			total += EstimateToken(msg.User.GetContent())
 		}
 
-		if msg.AssistantMessageParam != nil {
-			total += EstimateToken(msg.AssistantMessageParam.GetContent())
+		if msg.Assistant != nil {
+			total += EstimateToken(msg.Assistant.GetContent())
 		}
 
-		if msg.ToolMessageParam != nil {
-			total += EstimateToken(msg.ToolMessageParam.GetContent())
+		if msg.Tool != nil {
+			total += EstimateToken(msg.Tool.GetContent())
 		}
 	}
 

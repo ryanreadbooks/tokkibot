@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 var testOpenAi *OpenAI
@@ -48,18 +49,16 @@ func getTestWeather(lat, long float64) (string, error) {
 	}
 
 	var response testGetWeatherResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
+	if err := json.Unmarshal(body, &response); err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("The weather in %f, %f is %f°C", lat, long, response.CurrentWeather.Temperature), nil
+	return fmt.Sprintf("The weather in (%.2f, %.2f) is %.2f°C", lat, long, response.CurrentWeather.Temperature), nil
 }
 
 func TestMain(m *testing.M) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	baseURL := os.Getenv("OPENAI_BASE_URL")
-
 	if apiKey == "" || baseURL == "" {
 		fmt.Println("OPENAI_API_KEY and OPENAI_BASE_URL are required")
 		os.Exit(1)
@@ -71,21 +70,22 @@ func TestMain(m *testing.M) {
 		BaseURL: baseURL,
 	})
 	if err != nil {
-		fmt.Printf("Failed to create LLM: %v\n", err)
+		fmt.Println(err)
 		os.Exit(1)
 	}
+
 	m.Run()
 }
 
 func TestChatCompletionSingleRound(t *testing.T) {
-	messages := []schema.MessageParam{
-		schema.NewSystemMessageParam("You are a helpful assistant."),
-		schema.NewUserMessageParam(
+	messages := []param.Message{
+		param.NewSystemMessage("You are a helpful assistant."),
+		param.NewUserMessage(
 			"Please get the weather in Shanghai, China, use approximate latitude and longitude, and return the weather in the format of 'The weather in xx is yy°C'"),
 	}
 
-	tools := []schema.ToolParam{
-		schema.NewToolParam[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
+	tools := []param.Tool{
+		param.NewTool[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
 	}
 
 	ctx := t.Context()
@@ -107,14 +107,14 @@ func TestChatCompletionSingleRound(t *testing.T) {
 }
 
 func TestChatCompletion(t *testing.T) {
-	messages := []schema.MessageParam{
-		schema.NewSystemMessageParam("You are a helpful assistant."),
-		schema.NewUserMessageParam(
+	messages := []param.Message{
+		param.NewSystemMessage("You are a helpful assistant."),
+		param.NewUserMessage(
 			"Please get the weather in Shanghai, China, use approximate latitude and longitude, and return the weather in the format of 'The weather in xx is yy°C'"),
 	}
 
-	tools := []schema.ToolParam{
-		schema.NewToolParam[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
+	tools := []param.Tool{
+		param.NewTool[testGetWeatherInput]("get_weather", "Get the weather for a given location"),
 	}
 
 	ctx := t.Context()
@@ -147,14 +147,14 @@ func TestChatCompletion(t *testing.T) {
 
 		if choice.Message.HasToolCalls() {
 			fmt.Println("Tool Calls:")
-			var reasoningContent *schema.StringParam
+			var reasoningContent *param.String
 			if choice.Message.ReasoningContent != "" {
-				reasoningContent = &schema.StringParam{Value: choice.Message.ReasoningContent}
+				reasoningContent = &param.String{Value: choice.Message.ReasoningContent}
 			}
 			messages = append(messages,
-				schema.NewAssistantMessageParam(
+				param.NewAssistantMessage(
 					choice.Message.Content,
-					choice.Message.GetToolCallParams(), reasoningContent))
+					choice.Message.GetToolCalls(), reasoningContent))
 
 			for _, toolCall := range choice.Message.ToolCalls {
 				fmt.Println(toolCall.Id)
@@ -166,49 +166,46 @@ func TestChatCompletion(t *testing.T) {
 				var input testGetWeatherInput
 				err := json.Unmarshal([]byte(toolCall.Function.Arguments), &input)
 				if err != nil {
-					messages = append(messages, schema.NewToolMessageParam(toolCall.Id, fmt.Sprintf("Failed to unmarshal arguments: %v", err)))
+					messages = append(messages, param.NewToolMessage(toolCall.Id, fmt.Sprintf("Failed to unmarshal arguments: %v", err)))
 				} else {
 					result, err := getTestWeather(input.Lat, input.Long)
 					if err != nil {
-						messages = append(messages, schema.NewToolMessageParam(toolCall.Id, fmt.Sprintf("Failed to get weather: %v", err)))
+						messages = append(messages, param.NewToolMessage(toolCall.Id, fmt.Sprintf("Failed to get weather: %v", err)))
 					} else {
-						messages = append(messages, schema.NewToolMessageParam(toolCall.Id, result))
+						messages = append(messages, param.NewToolMessage(toolCall.Id, result))
 					}
 				}
 			}
 		} else {
-			fmt.Println("Final result:")
-			fmt.Println(resp.Choices[0].Message.Content)
-			fmt.Printf("Usage: %+v\n", usage)
+			fmt.Println("No tool calls")
 			break
 		}
 	}
+
+	fmt.Printf("Total usage: %+v\n", usage)
 }
 
 func TestChatCompletionStream(t *testing.T) {
-	messages := []schema.MessageParam{
-		schema.NewSystemMessageParam("You are a helpful assistant."),
-		schema.NewUserMessageParam("Give me a sentence about the weather in Shanghai, China."),
+	messages := []param.Message{
+		param.NewSystemMessage("You are a helpful assistant."),
+		param.NewUserMessage("Tell me why the sky is blue."),
 	}
 
-	stream := testOpenAi.ChatCompletionStream(t.Context(), &schema.Request{
-		Model:       "kimi-k2-0905-preview",
-		Temperature: 1.0,
-		Messages:    messages,
-	})
+	req := schema.NewRequest("kimi-k2-0905-preview", messages)
+	req.Temperature = 0.8
 
+	stream := testOpenAi.ChatCompletionStream(t.Context(), req)
 	for chunk := range stream {
 		if chunk.Err != nil {
-			fmt.Printf("Error: %v\n", chunk.Err)
-			break
-		} else {
-			fmt.Printf("Chunk: %s\n", chunk.FirstChoice().Delta.Content)
+			t.Fatalf("Failed to read stream: %v", chunk.Err)
 		}
+
+		fmt.Printf("Chunk: %+v\n", chunk.FirstChoice().Delta.Content)
 	}
 }
 
 type testGetRandomListInput struct {
-	Seed int `json:"seed" jsonschema:"description=random seed number"`
+	N int `json:"n" jsonschema:"description=The number of random numbers to generate"`
 }
 
 type testGetRandomNameInput struct {
@@ -216,15 +213,15 @@ type testGetRandomNameInput struct {
 }
 
 func TestChatCompletionStreamWithTools(t *testing.T) {
-	messages := []schema.MessageParam{
-		schema.NewSystemMessageParam("You are a helpful assistant."),
-		schema.NewUserMessageParam("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
+	messages := []param.Message{
+		param.NewSystemMessage("You are a helpful assistant."),
+		param.NewUserMessage("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
 			"You generate the parameters for the tools. And explain why in short, less then 50 words"),
 	}
 
-	tools := []schema.ToolParam{
-		schema.NewToolParam[testGetRandomListInput]("get_random_list", "Return a random number."),
-		schema.NewToolParam[testGetRandomNameInput]("get_random_name", "Return a random name."),
+	tools := []param.Tool{
+		param.NewTool[testGetRandomListInput]("get_random_list", "Return a random number."),
+		param.NewTool[testGetRandomNameInput]("get_random_name", "Return a random name."),
 	}
 
 	req := schema.NewRequest("kimi-k2-0905-preview", messages)
@@ -244,15 +241,15 @@ func TestChatCompletionStreamWithTools(t *testing.T) {
 }
 
 func TestChatCompletionStreamWithToolsHandler(t *testing.T) {
-	messages := []schema.MessageParam{
-		schema.NewSystemMessageParam("You are a helpful assistant."),
-		schema.NewUserMessageParam("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
+	messages := []param.Message{
+		param.NewSystemMessage("You are a helpful assistant."),
+		param.NewUserMessage("Return a random number and a random name using tools. YOU MUST USE TOOLS" +
 			"You generate the parameters for the tools. And explain why in detail"),
 	}
 
-	tools := []schema.ToolParam{
-		schema.NewToolParam[testGetRandomListInput]("get_random_list", "Return a random number."),
-		schema.NewToolParam[testGetRandomNameInput]("get_random_name", "Return a random name."),
+	tools := []param.Tool{
+		param.NewTool[testGetRandomListInput]("get_random_list", "Return a random number."),
+		param.NewTool[testGetRandomNameInput]("get_random_name", "Return a random name."),
 	}
 
 	req := schema.NewRequest("kimi-k2-0905-preview", messages)
@@ -272,32 +269,20 @@ func TestChatCompletionStreamWithToolsHandler(t *testing.T) {
 	toolCallCh := contentChCollection.ToolCall
 
 	wg.Add(1)
-	fmt.Println("Model is thinking...")
 	go func() {
 		defer wg.Done()
 		for content := range contentCh {
-			fmt.Print(content.Content)
-			os.Stdout.Sync()
+			fmt.Printf("Content: %s\n", content.Content)
 		}
-
-		fmt.Println("\nDone thinking...")
 	}()
 
 	wg.Add(1)
-	fmt.Println("Gather tools calls parameters...")
-	init := make(map[string]struct{})
 	go func() {
 		defer wg.Done()
-		for toolCall := range toolCallCh {
-			if _, ok := init[toolCall.Name]; !ok {
-				init[toolCall.Name] = struct{}{}
-				fmt.Printf("%s:\n", toolCall.Name)
-			} else {
-				fmt.Printf("%s", toolCall.ArgumentFragment)
-			}
+		for tc := range toolCallCh {
+			fmt.Printf("ToolCall: %+v\n", tc)
 		}
 	}()
 
 	wg.Wait()
-	fmt.Println("All done")
 }

@@ -1,5 +1,7 @@
 package schema
 
+import "github.com/ryanreadbooks/tokkibot/llm/schema/param"
+
 // completion message responsed from LLM service
 type CompletionMessage struct {
 	Content          string
@@ -14,10 +16,10 @@ func (m *CompletionMessage) HasToolCalls() bool {
 	return len(m.ToolCalls) > 0
 }
 
-func (m *CompletionMessage) GetToolCallParams() []*ToolCallParam {
-	params := make([]*ToolCallParam, 0, len(m.ToolCalls))
+func (m *CompletionMessage) GetToolCalls() []*param.ToolCall {
+	params := make([]*param.ToolCall, 0, len(m.ToolCalls))
 	for _, toolCall := range m.ToolCalls {
-		params = append(params, toolCall.ToToolCallParam())
+		params = append(params, toolCall.ToToolCall())
 	}
 	return params
 }

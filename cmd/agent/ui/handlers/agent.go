@@ -75,17 +75,17 @@ func convertSessionLogItem(item session.LogItem) []types.Message {
 
 	timestamp := time.Unix(item.Created, 0)
 
-	if item.IsFromUser() && item.Message.UserMessageParam != nil {
+	if item.IsFromUser() && item.Message.User != nil {
 		return []types.Message{{
 			Role:      types.RoleUser,
-			Content:   item.Message.UserMessageParam.String.GetValue(),
+			Content:   item.Message.User.String.GetValue(),
 			Timestamp: timestamp,
 		}}
 	}
 
-	if item.IsFromAssistant() && item.Message.AssistantMessageParam != nil {
+	if item.IsFromAssistant() && item.Message.Assistant != nil {
 		var messages []types.Message
-		assistantParam := item.Message.AssistantMessageParam
+		assistantParam := item.Message.Assistant
 
 		// Extract content and reasoning
 		content := ""

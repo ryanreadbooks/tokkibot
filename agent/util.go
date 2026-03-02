@@ -54,7 +54,7 @@ func (a *Agent) GetCurrentContextTokens(channel, chatId string) int64 {
 
 	// Create a temporary request for estimation only (without calling buildLLMMessageRequest)
 	fakeReq := schema.NewRequest(a.c.Model, msgList)
-	fakeReq.Tools = a.buildLLMToolParams()
+	fakeReq.Tools = a.buildLLMTools()
 
 	tokens, err := est.Estimate(a.c.RootCtx, fakeReq)
 	if err != nil {

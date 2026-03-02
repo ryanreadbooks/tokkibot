@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 func TestEstimateToken(t *testing.T) {
@@ -14,26 +15,26 @@ func TestEstimateToken(t *testing.T) {
 func TestEstimateRequestToken(t *testing.T) {
 	est, _ := RoughEstimator{}.Estimate(t.Context(),
 		&schema.Request{
-			Messages: []schema.MessageParam{
-				schema.NewSystemMessageParam("Hello, you are a smart agent"),
-				schema.NewUserMessageParam("What are your skills"),
-				schema.NewAssistantMessageParam("Wonderful",
-					[]*schema.ToolCallParam{
+			Messages: []param.Message{
+				param.NewSystemMessage("Hello, you are a smart agent"),
+				param.NewUserMessage("What are your skills"),
+				param.NewAssistantMessage("Wonderful",
+					[]*param.ToolCall{
 						{
-							Function: &schema.ToolCallFunctionParam{
+							Function: &param.ToolCallFunction{
 								Id:        "qwoi",
 								Name:      "abc",
 								Arguments: "{\"name\": \"ryan\", \"age\": 19}",
 							},
 						},
 					},
-					&schema.StringParam{
+					&param.String{
 						Value: "Let me think",
 					}),
 			},
-			Tools: []schema.ToolParam{
+			Tools: []param.Tool{
 				{
-					Definition: &schema.ToolDefinitionParam{
+					Definition: &param.ToolDefinition{
 						Name:        "qeo",
 						Description: "this is a tool",
 					},

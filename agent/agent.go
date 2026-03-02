@@ -15,7 +15,8 @@ import (
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm"
-	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema"
+	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
 //go:embed summary_prompt.md
@@ -173,7 +174,7 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 	} else {
 		r.Thinking = schema.DisableThinking()
 	}
-	r.Tools = a.buildLLMToolParams()
+	r.Tools = a.buildLLMTools()
 
 	a.cachedReqsMu.Lock()
 	defer a.cachedReqsMu.Unlock()
@@ -215,10 +216,10 @@ func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) er
 }
 
 // summarizeMessagesWithLLM uses LLM to create a summary of conversation messages
-func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []schema.MessageParam) (string, error) {
-	summaryMsg := []schema.MessageParam{
-		schema.NewSystemMessageParam(summaryPrompt),
-		schema.NewUserMessageParam("Please summarize the conversation history above:"),
+func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []param.Message) (string, error) {
+	summaryMsg := []param.Message{
+		param.NewSystemMessage(summaryPrompt),
+		param.NewUserMessage("Please summarize the conversation history above:"),
 	}
 	summaryMsg = append(summaryMsg, messages...)
 
@@ -235,10 +236,10 @@ func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []schema.
 	return resp.FirstChoice().Message.Content, nil
 }
 
-func (a *Agent) buildLLMToolParams() []schema.ToolParam {
-	params := make([]schema.ToolParam, 0, len(a.tools))
+func (a *Agent) buildLLMTools() []param.Tool {
+	params := make([]param.Tool, 0, len(a.tools))
 	for _, tool := range a.tools {
-		params = append(params, schema.NewToolParamWithSchemaParam(
+		params = append(params, param.NewToolWithSchema(
 			tool.Info().Name,
 			tool.Info().Description,
 			*tool.Info().Schema,

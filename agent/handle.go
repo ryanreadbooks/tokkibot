@@ -231,16 +231,6 @@ mainLoop:
 		}
 
 		for _, tcr := range dstTcs {
-			select {
-			case <-ctx.Done():
-				result.Content <- &AskStreamResultContent{
-					Round:   curIter,
-					Content: fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()),
-				}
-				break mainLoop
-			default:
-			}
-
 			if err := a.contextMgr.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
 				result.Content <- &AskStreamResultContent{
 					Round:   curIter,
