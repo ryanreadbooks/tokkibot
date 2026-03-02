@@ -7,11 +7,19 @@ import (
 
 // Stream content for streaming response.
 type StreamContent struct {
+	Round            int
 	Content          string
 	ReasoningContent string
+
+	// metadata from incoming message
+	SenderId string
+	Channel  Type
+	ChatId   string
+	Metadata map[string]any
 }
 
 type StreamTool struct {
+	Round     int
 	Name      string
 	Arguments string
 }
@@ -46,6 +54,18 @@ func (m *IncomingMessage) StreamContent() chan<- *StreamContent {
 
 func (m *IncomingMessage) StreamTool() chan<- *StreamTool {
 	return m.streamTool
+}
+
+func (m *IncomingMessage) CloseStreamContent() {
+	if m.streamContent != nil {
+		close(m.streamContent)
+	}
+}
+
+func (m *IncomingMessage) CloseStreamTool() {
+	if m.streamTool != nil {
+		close(m.streamTool)
+	}
 }
 
 func (m *IncomingMessage) Context() context.Context {

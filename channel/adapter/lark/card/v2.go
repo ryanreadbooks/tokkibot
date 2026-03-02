@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	CardV2SchemaVersion = "2.0"
+	SchemaVersion = "2.0"
 )
 
-func messageCardElementJson(e CardV2BodyElement) ([]byte, error) {
+func messageCardElementJson(e BodyElement) ([]byte, error) {
 	data, err := larkcore.StructToMap(e)
 	if err != nil {
 		return nil, err
@@ -20,14 +20,47 @@ func messageCardElementJson(e CardV2BodyElement) ([]byte, error) {
 }
 
 type CardV2 struct {
-	Schema string        `json:"schema"`
-	Config *CardV2Config `json:"config,omitempty"`
-	Header *CardV2Header `json:"header,omitempty"`
-	Body   *CardV2Body   `json:"body,omitempty"`
+	Schema string  `json:"schema"`
+	Config *Config `json:"config,omitempty"`
+	Header *Header `json:"header,omitempty"`
+	Body   *Body   `json:"body,omitempty"`
 }
 
-type CardV2Config struct {
-	StreamingMode bool `json:"streaming_mode,omitempty"`
+type StreamingConfig struct {
+	PrintFrequencyMs *StreamingConfigPrintFrequencyMs `json:"print_frequency_ms,omitempty"`
+	PrintStep        *StreamingConfigPrintStep        `json:"print_step,omitempty"`
+	PrintStrategy    StreamingConfigPrintStrategy     `json:"print_strategy,omitempty"`
+}
+
+type StreamingConfigPrintFrequencyMs struct {
+	Default int `json:"default"`
+	Android int `json:"android"`
+	Ios     int `json:"ios"`
+	Pc      int `json:"pc"`
+}
+
+type StreamingConfigPrintStep struct {
+	Default int `json:"default"`
+	Android int `json:"android"`
+	Ios     int `json:"ios"`
+	Pc      int `json:"pc"`
+}
+
+type StreamingConfigPrintStrategy string
+
+const (
+	StreamingConfigPrintStrategyFast  StreamingConfigPrintStrategy = "fast"
+	StreamingConfigPrintStrategyDelay StreamingConfigPrintStrategy = "delay"
+)
+
+type Summary struct {
+	Content string `json:"content"`
+}
+
+type Config struct {
+	Summary         *Summary         `json:"summary,omitempty"`
+	StreamingMode   bool             `json:"streaming_mode,omitempty"`
+	StreamingConfig *StreamingConfig `json:"streaming_config,omitempty"`
 }
 
 type TextTag string
@@ -45,59 +78,59 @@ const (
 	TextAlignRight  TextAlign = "right"
 )
 
-type CardV2Header struct {
-	Title    *CardV2HeaderTitle    `json:"title,omitempty"`
-	Subtitle *CardV2HeaderSubtitle `json:"subtitle,omitempty"`
+type Header struct {
+	Title    *HeaderTitle    `json:"title,omitempty"`
+	Subtitle *HeaderSubtitle `json:"subtitle,omitempty"`
 }
 
-type CardV2HeaderTitle struct {
+type HeaderTitle struct {
 	Tag     TextTag `json:"tag"`     // plain_text or lark_md
 	Content string  `json:"content"` // title content
 }
 
-type CardV2HeaderSubtitle struct {
+type HeaderSubtitle struct {
 	Tag     TextTag `json:"tag"`     // plain_text or lark_md
 	Content string  `json:"content"` // subtitle content
 }
 
-type CardV2Body struct {
-	Elements []CardV2BodyElement `json:"elements,omitempty"`
+type Body struct {
+	Elements []BodyElement `json:"elements,omitempty"`
 }
 
-type CardV2BodyElement interface {
+type BodyElement interface {
 	Tag() string
 	MarshalJSON() ([]byte, error)
 }
 
-type CardV2BodyDivElement struct {
-	ElementId string                    `json:"element_id,omitempty"`
-	Text      *CardV2BodyDivElementText `json:"text,omitempty"`
+type BodyDivElement struct {
+	ElementId string              `json:"element_id,omitempty"`
+	Text      *BodyDivElementText `json:"text,omitempty"`
 }
 
-type CardV2BodyDivElementText struct {
+type BodyDivElementText struct {
 	Tag     TextTag `json:"tag"`     // plain_text or lark_md
 	Content string  `json:"content"` // text content
 }
 
-func (e *CardV2BodyDivElement) Tag() string {
+func (e *BodyDivElement) Tag() string {
 	return "div"
 }
 
-func (e *CardV2BodyDivElement) MarshalJSON() ([]byte, error) {
+func (e *BodyDivElement) MarshalJSON() ([]byte, error) {
 	return messageCardElementJson(e)
 }
 
-type CardV2BodyMarkdownElement struct {
+type BodyMarkdownElement struct {
 	Content   string    `json:"content,omitempty"`
 	ElementId string    `json:"element_id,omitempty"`
 	TextAlign TextAlign `json:"text_align,omitempty"`
 }
 
-func (e *CardV2BodyMarkdownElement) Tag() string {
+func (e *BodyMarkdownElement) Tag() string {
 	return "markdown"
 }
 
-func (e *CardV2BodyMarkdownElement) MarshalJSON() ([]byte, error) {
+func (e *BodyMarkdownElement) MarshalJSON() ([]byte, error) {
 	return messageCardElementJson(e)
 }
 
@@ -108,7 +141,7 @@ type CardV2Builder struct {
 func NewCardV2Builder() *CardV2Builder {
 	return &CardV2Builder{
 		card: &CardV2{
-			Schema: CardV2SchemaVersion,
+			Schema: SchemaVersion,
 		},
 	}
 }
@@ -119,9 +152,9 @@ func (b *CardV2Builder) Build() *CardV2 {
 
 func (b *CardV2Builder) SetHeaderTitle(title string) *CardV2Builder {
 	if b.card.Header == nil {
-		b.card.Header = &CardV2Header{}
+		b.card.Header = &Header{}
 	}
-	b.card.Header.Title = &CardV2HeaderTitle{
+	b.card.Header.Title = &HeaderTitle{
 		Tag:     TextTagPlainText,
 		Content: title,
 	}
@@ -130,25 +163,30 @@ func (b *CardV2Builder) SetHeaderTitle(title string) *CardV2Builder {
 
 func (b *CardV2Builder) SetHeaderSubtitle(subtitle string) *CardV2Builder {
 	if b.card.Header == nil {
-		b.card.Header = &CardV2Header{}
+		b.card.Header = &Header{}
 	}
-	b.card.Header.Subtitle = &CardV2HeaderSubtitle{
+	b.card.Header.Subtitle = &HeaderSubtitle{
 		Tag:     TextTagPlainText,
 		Content: subtitle,
 	}
 	return b
 }
 
-func (b *CardV2Builder) AppendBodyElement(element CardV2BodyElement) *CardV2Builder {
+func (b *CardV2Builder) AppendBodyElement(element BodyElement) *CardV2Builder {
 	if b.card.Body == nil {
-		b.card.Body = &CardV2Body{}
+		b.card.Body = &Body{}
 	}
 	b.card.Body.Elements = append(b.card.Body.Elements, element)
 	return b
 }
 
-func NewCardV2BodyMarkdownElement(content string) *CardV2BodyMarkdownElement {
-	return &CardV2BodyMarkdownElement{
+func NewBodyMarkdownElement(content string) *BodyMarkdownElement {
+	return &BodyMarkdownElement{
 		Content: content,
 	}
+}
+
+func (e *BodyMarkdownElement) SetElementId(elementId string) *BodyMarkdownElement {
+	e.ElementId = elementId
+	return e
 }

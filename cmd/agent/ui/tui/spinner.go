@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ryanreadbooks/tokkibot/agent"
+	cliadapter "github.com/ryanreadbooks/tokkibot/channel/adapter/cli"
 )
 
 // SpinnerModel is a simple model showing a spinner while agent is thinking
@@ -62,20 +64,22 @@ func (m SpinnerModel) View() string {
 	return fmt.Sprintf("%s Agent thinking...", m.spinner.View())
 }
 
-// RunWithSpinner runs agent with a spinner animation
-func RunWithSpinner(ctx context.Context, ag *agent.Agent, channel, chatID, message string) error {
+// RunWithSpinner runs agent with a spinner animation via adapter (gateway)
+func RunWithSpinner(ctx context.Context, _ *agent.Agent, adapter *cliadapter.CLIAdapter, message string) error {
 	model := NewSpinnerModel()
 	program := tea.NewProgram(model)
 
-	// Run agent in background
 	go func() {
-		answer := ag.Ask(ctx, &agent.UserMessage{
-			Channel: channel,
-			ChatId:  chatID,
-			Created: 0, // Will be set by agent
-			Content: message,
-		})
-		program.Send(answerMsg(answer))
+		result := adapter.SendUserMessage(ctx, message)
+
+		var answer strings.Builder
+		for content := range result.Content {
+			answer.WriteString(content.Content)
+		}
+		for range result.ToolCall {
+		}
+
+		program.Send(answerMsg(answer.String()))
 	}()
 
 	finalModel, err := program.Run()
@@ -83,7 +87,6 @@ func RunWithSpinner(ctx context.Context, ag *agent.Agent, channel, chatID, messa
 		return err
 	}
 
-	// Print answer
 	if m, ok := finalModel.(SpinnerModel); ok {
 		fmt.Println(m.answer)
 	}

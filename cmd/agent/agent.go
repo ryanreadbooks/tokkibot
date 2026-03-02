@@ -6,8 +6,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
+	cliadapter "github.com/ryanreadbooks/tokkibot/channel/adapter/cli"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui"
+	"github.com/ryanreadbooks/tokkibot/gateway"
 
 	"github.com/spf13/cobra"
 )
@@ -27,8 +29,7 @@ var AgentCmd = &cobra.Command{
 		if oneTimeQuestion != "" {
 			return runAgentOnce(cmd.Context(), oneTimeQuestion)
 		}
-
-		return runAgent(cmd.Context(), args)
+		return runAgent(cmd.Context())
 	},
 }
 
@@ -72,35 +73,55 @@ func init() {
 }
 
 func runAgentOnce(ctx context.Context, message string) error {
-	ag, err := agent.Prepare(ctx)
+	gw, err := gateway.NewGateway(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to prepare agent: %w", err)
+		return fmt.Errorf("failed to create gateway: %w", err)
 	}
 
-	// Initialize one-time session
-	if err := ag.InitSession(chmodel.CLI.String(), "one-time"); err != nil {
+	cliAdapter := cliadapter.NewAdapter(cliadapter.CLIConfig{
+		ChatID: "one-time",
+	})
+	gw.AddAdapter(cliAdapter)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		_ = gw.Run(ctx)
+	}()
+
+	if err := gw.GetAgent().InitSession(chmodel.CLI.String(), "one-time"); err != nil {
 		return err
 	}
 
-	// Run with spinner
-	return tui.RunWithSpinner(ctx, ag, chmodel.CLI.String(), "one-time", message)
+	return tui.RunWithSpinner(ctx, gw.GetAgent(), cliAdapter, message)
 }
 
-func runAgent(ctx context.Context, args []string) error {
-	ag, err := agent.Prepare(ctx)
+func runAgent(ctx context.Context) error {
+	gw, err := gateway.NewGateway(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to prepare agent: %w", err)
+		return fmt.Errorf("failed to create gateway: %w", err)
 	}
 
-	// Generate or use existing chat ID
 	if resumeSessionChatId == "" {
 		agentChatId = uuid.New().String()
 	} else {
 		agentChatId = resumeSessionChatId
 	}
 
-	// Run TUI
-	if err := tui.Run(ctx, ag, chmodel.CLI.String(), agentChatId); err != nil {
+	cliAdapter := cliadapter.NewAdapter(cliadapter.CLIConfig{
+		ChatID: agentChatId,
+	})
+	gw.AddAdapter(cliAdapter)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		_ = gw.Run(ctx)
+	}()
+
+	if err := tui.Run(ctx, gw.GetAgent(), cliAdapter); err != nil {
 		return err
 	}
 

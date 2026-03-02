@@ -6,33 +6,80 @@ import (
 
 	"github.com/ryanreadbooks/tokkibot/agent"
 	"github.com/ryanreadbooks/tokkibot/agent/context/session"
+	cliadapter "github.com/ryanreadbooks/tokkibot/channel/adapter/cli"
+	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/types"
 )
 
-// AgentHandler handles agent interactions
+// AgentHandler handles agent interactions via CLI adapter
 type AgentHandler struct {
-	agent   *agent.Agent
-	channel string
-	chatID  string
+	agent      *agent.Agent
+	cliAdapter *cliadapter.CLIAdapter
+	channel    string
+	chatID     string
 }
 
-// NewAgentHandler creates a new agent handler
-func NewAgentHandler(ag *agent.Agent, channel, chatID string) *AgentHandler {
+// NewAgentHandler creates a new agent handler with CLI adapter
+func NewAgentHandler(ag *agent.Agent, adapter *cliadapter.CLIAdapter) *AgentHandler {
 	return &AgentHandler{
-		agent:   ag,
-		channel: channel,
-		chatID:  chatID,
+		agent:      ag,
+		cliAdapter: adapter,
+		channel:    model.CLI.String(),
+		chatID:     adapter.ChatID(),
 	}
 }
 
-// SendMessage sends a message to the agent and returns streaming result
-func (h *AgentHandler) SendMessage(ctx context.Context, content string) *agent.AskStreamResult {
-	return h.agent.AskStream(ctx, &agent.UserMessage{
-		Channel: h.channel,
-		ChatId:  h.chatID,
-		Created: time.Now().Unix(),
-		Content: content,
-	})
+// StreamResult wraps the streaming channels
+type StreamResult struct {
+	Content  <-chan *StreamContent
+	ToolCall <-chan *StreamToolCall
+}
+
+type StreamContent struct {
+	Round            int
+	Content          string
+	ReasoningContent string
+}
+
+type StreamToolCall struct {
+	Round     int
+	Name      string
+	Arguments string
+}
+
+// SendMessage sends a message via adapter to gateway and returns streaming result
+func (h *AgentHandler) SendMessage(ctx context.Context, content string) *StreamResult {
+	result := h.cliAdapter.SendUserMessage(ctx, content)
+
+	contentCh := make(chan *StreamContent, 16)
+	toolCallCh := make(chan *StreamToolCall, 16)
+
+	go func() {
+		for c := range result.Content {
+			contentCh <- &StreamContent{
+				Round:            c.Round,
+				Content:          c.Content,
+				ReasoningContent: c.ReasoningContent,
+			}
+		}
+		close(contentCh)
+	}()
+
+	go func() {
+		for tc := range result.ToolCall {
+			toolCallCh <- &StreamToolCall{
+				Round:     tc.Round,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			}
+		}
+		close(toolCallCh)
+	}()
+
+	return &StreamResult{
+		Content:  contentCh,
+		ToolCall: toolCallCh,
+	}
 }
 
 // GetTokens returns current token count

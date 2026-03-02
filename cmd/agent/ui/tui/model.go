@@ -3,8 +3,9 @@ package tui
 import (
 	"context"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ryanreadbooks/tokkibot/agent"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/handlers"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui/components"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui/styles"
@@ -29,26 +30,24 @@ type Model struct {
 	toolCall *components.ToolCallComponent
 	tokens   *components.TokensComponent
 	confirm  *components.ConfirmDialog
+	spinner  spinner.Model
 
 	// State
-	width    int
-	height   int
-	curRound int
-	err      error
+	width      int
+	height     int
+	curRound   int
+	processing bool
+	err        error
 }
 
-// New creates a new TUI model
+// New creates a new TUI model with handler
 func New(
 	ctx context.Context,
-	ag *agent.Agent,
-	channel string,
-	chatID string,
+	handler *handlers.AgentHandler,
 	initMessages []types.Message,
 ) Model {
 	theme := styles.DefaultTheme()
-	handler := handlers.NewAgentHandler(ag, channel, chatID)
 
-	// Create components
 	chat := components.NewChatComponent(theme)
 	chat.LoadMessages(initMessages)
 
@@ -59,6 +58,10 @@ func New(
 
 	confirm := components.NewConfirmDialog(theme)
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
+
 	return Model{
 		ctx:      ctx,
 		handler:  handler,
@@ -68,6 +71,7 @@ func New(
 		toolCall: toolCall,
 		tokens:   tokens,
 		confirm:  confirm,
+		spinner:  s,
 		width:    80,
 		height:   24,
 		curRound: -1,
@@ -89,5 +93,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.input.Init(),
 		m.toolCall.Init(),
+		m.spinner.Tick,
 	)
 }

@@ -11,9 +11,15 @@ func (m Model) View() string {
 			m.confirm.View())
 	}
 
+	// Build status line
+	statusLine := m.tokens.View()
+	if m.processing {
+		statusLine = fmt.Sprintf("%s Processing...", m.spinner.View())
+	}
+
 	// Normal view - tool calls are now part of chat
 	return fmt.Sprintf("%s\n%s\n%s",
 		m.chat.View(),
 		m.input.View(),
-		m.tokens.View())
+		statusLine)
 }

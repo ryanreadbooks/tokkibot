@@ -57,17 +57,25 @@ func (c *ChatComponent) AddMessage(msg types.Message) {
 	c.refresh()
 }
 
-// UpdateLastMessage updates the last message (for streaming)
+// UpdateLastMessage updates the last assistant message (for streaming)
 func (c *ChatComponent) UpdateLastMessage(content, reasoningContent string) {
 	if len(c.messages) == 0 {
 		return
 	}
 
-	idx := len(c.messages) - 1
-	if c.messages[idx].IsAssistant() {
-		c.messages[idx].Content += content
-		c.messages[idx].ReasoningContent += reasoningContent
-		c.refresh()
+	// Find the last assistant message after the last user message
+	// This ensures we update the correct message in the current conversation round
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		if c.messages[i].IsUser() {
+			// Reached user message, stop searching
+			break
+		}
+		if c.messages[i].IsAssistant() {
+			c.messages[i].Content += content
+			c.messages[i].ReasoningContent += reasoningContent
+			c.refresh()
+			return
+		}
 	}
 }
 

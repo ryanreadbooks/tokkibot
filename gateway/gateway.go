@@ -19,6 +19,8 @@ type Gateway struct {
 	adapters map[chmodel.Type]chadapter.Adapter
 	poolMu   sync.Mutex
 	pools    map[string]*ants.Pool
+
+	verbose bool
 }
 
 func NewGateway(ctx context.Context) (*Gateway, error) {
@@ -35,6 +37,10 @@ func NewGateway(ctx context.Context) (*Gateway, error) {
 	}
 
 	return gateway, nil
+}
+
+func (g *Gateway) SetVerbose(verbose bool) {
+	g.verbose = verbose
 }
 
 func (g *Gateway) GetAgent() *agent.Agent {
@@ -56,7 +62,9 @@ func StartGateway(ctx context.Context) error {
 
 func (g *Gateway) Run(ctx context.Context) error {
 	for _, adapter := range g.adapters {
-		slog.Info(fmt.Sprintf("channel %s started.", adapter.Type()))
+		if g.verbose {
+			slog.Info(fmt.Sprintf("channel %s begin to run...", adapter.Type()))
+		}
 		g.wg.Go(func() {
 			adapter.Start(ctx)
 		})
@@ -74,10 +82,14 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("message worker stopped", "adapter", adapter.Type(), "reason", ctx.Err())
+			if g.verbose {
+				slog.Info("message worker stopped", "adapter", adapter.Type(), "reason", ctx.Err())
+			}
 			return
 		case rawMsg := <-adapter.ReceiveChan():
-			slog.Info("received message", "adapter", adapter.Type(), "message", rawMsg)
+			if g.verbose {
+				slog.Info("received message", "adapter", adapter.Type(), "message", rawMsg)
+			}
 
 			g.poolMu.Lock()
 			poolKey := fmt.Sprintf("%s:%s", rawMsg.Channel, rawMsg.ChatId)
@@ -134,27 +146,42 @@ func (g *Gateway) workerDoStream(
 	_ chadapter.Adapter,
 ) {
 	streamResult := g.agent.AskStream(rawMsg.Context(), userMessage)
-	if rawMsg.StreamTool() == nil {
-		misc.DiscardChan(streamResult.ToolCall)
-	} else {
-		// send to tool call output channel
-		for tool := range streamResult.ToolCall {
-			rawMsg.StreamTool() <- &chmodel.StreamTool{
-				Name:      tool.Name,
-				Arguments: tool.Arguments,
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		if rawMsg.StreamTool() == nil {
+			misc.DiscardChan(streamResult.ToolCall)
+		} else {
+			for tool := range streamResult.ToolCall {
+				rawMsg.StreamTool() <- &chmodel.StreamTool{
+					Round:     tool.Round,
+					Name:      tool.Name,
+					Arguments: tool.Arguments,
+				}
 			}
+			rawMsg.CloseStreamTool()
 		}
-	}
+	})
 
-	if rawMsg.StreamContent() == nil {
-		misc.DiscardChan(streamResult.Content)
-	} else {
-		// send content to output channel
-		for content := range streamResult.Content {
-			rawMsg.StreamContent() <- &chmodel.StreamContent{
-				Content:          content.Content,
-				ReasoningContent: content.ReasoningContent,
+	wg.Go(func() {
+		if rawMsg.StreamContent() == nil {
+			misc.DiscardChan(streamResult.Content)
+		} else {
+			for content := range streamResult.Content {
+				rawMsg.StreamContent() <- &chmodel.StreamContent{
+					Round:            content.Round,
+					Content:          content.Content,
+					ReasoningContent: content.ReasoningContent,
+
+					// metadata from incoming message
+					SenderId: rawMsg.SenderId,
+					Channel:  rawMsg.Channel,
+					ChatId:   rawMsg.ChatId,
+					Metadata: rawMsg.Metadata,
+				}
 			}
+			rawMsg.CloseStreamContent()
 		}
-	}
+	})
+
+	wg.Wait()
 }

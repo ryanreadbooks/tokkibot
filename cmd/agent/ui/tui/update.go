@@ -3,6 +3,7 @@ package tui
 import (
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/types"
 )
@@ -30,6 +31,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass mouse events to chat for scrolling
 		chatCmd := m.chat.Update(msg)
 		return m, chatCmd
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case ContentMsg:
 		return m.handleContent(msg), nil
@@ -69,7 +75,9 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	// - input area: inputHeight (2 lines)
 	// - tokens line: 1 line
 	// - newlines in View: 2 lines (\n before input, \n before tokens)
-	reservedHeight := inputHeight 
+	tokensHeight := 1
+	newlinesCount := 2
+	reservedHeight := inputHeight + tokensHeight + newlinesCount
 	chatHeight := msg.Height - reservedHeight
 	if chatHeight < 5 {
 		chatHeight = 5
@@ -114,6 +122,14 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Ignore if already processing
+		if m.processing {
+			return m, nil
+		}
+
+		// Set processing state
+		m.processing = true
+
 		// Add user message
 		m.chat.AddMessage(types.Message{
 			Role:      types.RoleUser,
@@ -127,12 +143,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 			Timestamp: time.Now(),
 		})
 
-		// Send to agent
+		// Send to agent via handler
 		stream := m.handler.SendMessage(m.ctx, userInput)
-		
+
 		// Capture program reference for goroutines
 		program := m.program
-		
+
 		// Consume content stream
 		go func() {
 			for c := range stream.Content {
@@ -215,6 +231,7 @@ func (m Model) handleToolCall(msg ToolCallMsg) Model {
 // handleClearRound handles round clear events
 func (m Model) handleClearRound(msg ClearRoundMsg) (Model, tea.Cmd) {
 	m.curRound = int(msg)
+	m.processing = false
 
 	// Return a command to update tokens (instead of calling Send directly)
 	return m, func() tea.Msg {

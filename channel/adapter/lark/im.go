@@ -52,7 +52,7 @@ func (a *LarkAdapter) sendErrorLog(ctx context.Context, userOpenId string, err e
 // Content is considered as markdown format
 func (a *LarkAdapter) sendInteractiveMessage(ctx context.Context, userOpenId string, content string) {
 	cd := card.NewCardV2Builder().
-		AppendBodyElement(card.NewCardV2BodyMarkdownElement(content)).
+		AppendBodyElement(card.NewBodyMarkdownElement(content)).
 		Build()
 
 	cdJson, err := json.Marshal(cd)
@@ -64,7 +64,7 @@ func (a *LarkAdapter) sendInteractiveMessage(ctx context.Context, userOpenId str
 	a.sendMessage(ctx, userOpenId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
-func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgType string, content string) {
+func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgType string, content string) (string, error) {
 	body := imv1.NewReplyMessageReqBodyBuilder().
 		MsgType(msgType).
 		Content(content).
@@ -77,27 +77,40 @@ func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgTyp
 	resp, err := a.cli.Im.Message.Reply(ctx, req)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to reply message", "error", err)
-		return
+		return "", err
 	}
 
 	if !resp.Success() {
 		slog.ErrorContext(ctx, "failed to reply message", "error", resp.ErrorResp(), "request_id", resp.RequestId())
-		return
+		return "", err
 	}
+
+	return *resp.Data.MessageId, nil
 }
 
-func (a *LarkAdapter) replyInteractiveMessage(ctx context.Context, messageId string, content string) {
+func (a *LarkAdapter) replyInteractiveMessage(ctx context.Context, messageId string, content string) (string, error) {
 	cd := card.NewCardV2Builder().
-		AppendBodyElement(card.NewCardV2BodyMarkdownElement(content)).
+		AppendBodyElement(card.NewBodyMarkdownElement(content)).
 		Build()
 
 	cdJson, err := json.Marshal(cd)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
-		return
+		return "", err
 	}
 
-	a.replyMessage(ctx, messageId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+}
+
+func (a *LarkAdapter) replyInteractiveCardMessage(ctx context.Context, messageId, cardId string) (string, error) {
+	cd := card.NewEntity(cardId)
+	cdJson, err := json.Marshal(cd)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		return "", err
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
 // return reaction id
@@ -143,6 +156,22 @@ func (a *LarkAdapter) deleteMessageReaction(ctx context.Context, messageId, reac
 
 	if !resp.Success() {
 		slog.ErrorContext(ctx, "failed to delete message reaction", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		return
+	}
+}
+
+func (a *LarkAdapter) recallMessage(ctx context.Context, messageId string) {
+	req := imv1.NewDeleteMessageReqBuilder().
+		MessageId(messageId).
+		Build()
+	resp, err := a.cli.Im.Message.Delete(ctx, req)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to recall message", "error", err)
+		return
+	}
+
+	if !resp.Success() {
+		slog.ErrorContext(ctx, "failed to recall message", "error", resp.ErrorResp(), "request_id", resp.RequestId())
 		return
 	}
 }

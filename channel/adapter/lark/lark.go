@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
@@ -169,7 +170,9 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 	a.cancels[messageId] = sourceCancel
 	a.cancelMu.Unlock()
 
-	a.input <- &model.IncomingMessage{
+	// enable streaming mode in lark for better user experience
+	streamOutput := make(chan *model.StreamContent)
+	incomingMsg := &model.IncomingMessage{
 		SenderId:    senderId,
 		Channel:     model.Lark,
 		ChatId:      chatId,
@@ -180,7 +183,78 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 			"reaction_id": reactionId,
 		},
 		SourceCtx: sourceCtx,
+		Stream:    true,
 	}
+	incomingMsg.SetStreamContent(streamOutput)
+
+	a.input <- incomingMsg
+
+	go a.consumeGatewayStreamMessage(sourceCtx, incomingMsg, streamOutput)
 
 	return nil
+}
+
+func (a *LarkAdapter) consumeGatewayStreamMessage(
+	ctx context.Context,
+	incomingMsg *model.IncomingMessage,
+	streamOutput <-chan *model.StreamContent,
+) {
+	// accumulate content
+	var (
+		contentBuilder strings.Builder
+		seq            int    = 1
+		elementId      string = "markdown_1"
+
+		messageId               string = incomingMsg.Metadata["message_id"].(string)
+		reactionId              string = incomingMsg.Metadata["reaction_id"].(string)
+		streamSendEnabled       bool
+		replyMessageId          string
+		shouldRecallCardMessage bool
+	)
+
+	cardId, err := a.createCardEntityForStream(ctx, elementId)
+	slog.InfoContext(ctx, "created card entity for stream", "card_id", cardId, "error", err)
+	if err == nil {
+		if replyMessageId, err = a.replyInteractiveCardMessage(ctx, messageId, cardId); err == nil {
+			slog.InfoContext(ctx, "replied interactive card message", "message_id", messageId, "card_id", cardId)
+			streamSendEnabled = true
+		}
+	} else {
+		slog.InfoContext(ctx, "failed to create card entity for stream", "error", err)
+	}
+
+	for content := range streamOutput {
+		contentBuilder.WriteString(content.Content)
+		if streamSendEnabled {
+			// update card entity
+			err = a.updateCardEntityForStream(ctx, cardId, elementId, contentBuilder.String(), seq)
+			if err != nil {
+				shouldRecallCardMessage = true
+				streamSendEnabled = false // fallback
+			}
+			seq++
+		}
+	}
+
+	if !streamSendEnabled {
+		if replyMessageId != "" && shouldRecallCardMessage {
+			a.recallMessage(ctx, replyMessageId)
+		}
+		// fallback to normal interactive message
+		a.SendChan() <- &model.OutgoingMessage{
+			SenderId: incomingMsg.SenderId,
+			Channel:  incomingMsg.Channel,
+			ChatId:   incomingMsg.ChatId,
+			Content:  contentBuilder.String(),
+			Metadata: map[string]any{
+				"message_id":  messageId,
+				"reaction_id": reactionId,
+			},
+		}
+		slog.InfoContext(ctx, "fallback to normal interactive message", "message_id", messageId)
+	} else {
+		// stop card stream
+		a.stopCardEntityStream(ctx, cardId, seq)
+		a.sendMessageReaction(ctx, messageId, emoji.DONE)
+	}
 }
