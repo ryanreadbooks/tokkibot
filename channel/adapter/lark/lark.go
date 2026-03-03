@@ -10,6 +10,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/pkg/httpx"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -43,12 +44,16 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 	wscli := ws.NewClient(
 		cfg.AppId,
 		cfg.AppSecret,
-		ws.WithLogLevel(larkcore.LogLevelWarn),
-		ws.WithEventHandler(eventDispatcher))
+		ws.WithLogLevel(larkcore.LogLevelInfo),
+		ws.WithEventHandler(eventDispatcher),
+		ws.WithAutoReconnect(true),
+	)
 	cli := lark.NewClient(
 		cfg.AppId,
 		cfg.AppSecret,
-		lark.WithLogLevel(larkcore.LogLevelWarn))
+		lark.WithLogLevel(larkcore.LogLevelWarn),
+		lark.WithHttpClient(httpx.NewRetryClient(httpx.DefaultRetryConfig())),
+	)
 	adapter := &LarkAdapter{
 		wscli: wscli,
 		cli:   cli,

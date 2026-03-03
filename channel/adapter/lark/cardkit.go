@@ -17,8 +17,8 @@ func (a *LarkAdapter) createCardEntityForStream(ctx context.Context, elementId s
 		Build()
 	c.Config = &card.Config{
 		StreamingMode: true,
-		Summary: &card.Summary{
-			Content: "Generating...",
+		StreamingConfig: &card.StreamingConfig{
+			PrintStrategy: card.StreamingConfigPrintStrategyDelay,
 		},
 	}
 	cardJson, err := json.Marshal(c)

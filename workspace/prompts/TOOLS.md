@@ -183,6 +183,14 @@ Execute a skill script:
 
 Fetch content from a URL and convert it to a readable format. Automatically handles different content types with intelligent processing.
 
+**When to use:**
+
+- Retrieve documentation, API references, or technical guides from the web
+- Access online code examples, tutorials, or configuration samples
+- Fetch external resources referenced by the user (links shared in conversation)
+- Download remote configuration files, schemas, or templates
+- Verify online content or check current state of web pages
+
 **Parameters:**
 
 - `url` (required): The URL to fetch (must be http:// or https://)
