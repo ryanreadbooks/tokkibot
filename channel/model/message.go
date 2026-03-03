@@ -10,12 +10,6 @@ type StreamContent struct {
 	Round            int
 	Content          string
 	ReasoningContent string
-
-	// metadata from incoming message
-	SenderId string
-	Channel  Type
-	ChatId   string
-	Metadata map[string]any
 }
 
 type StreamTool struct {
@@ -23,6 +17,11 @@ type StreamTool struct {
 	Name      string
 	Arguments string
 }
+
+// Callback handlers for streaming
+type StreamContentHandler func(*StreamContent)
+type StreamToolHandler func(*StreamTool)
+type StreamDoneHandler func()
 
 type IncomingMessage struct {
 	SenderId    string
@@ -34,37 +33,32 @@ type IncomingMessage struct {
 	Metadata    map[string]any
 
 	// req params passed to gateway
-	SourceCtx     context.Context
-	Stream        bool
-	streamContent chan *StreamContent // output content receiving
-	streamTool    chan *StreamTool    // output tool call receiving
+	SourceCtx context.Context
+
+	// Enable streaming response
+	Stream    bool
+
+	// Stream callbacks - adapter implements these
+	OnContent StreamContentHandler
+	OnTool    StreamToolHandler
+	OnDone    StreamDoneHandler
 }
 
-func (m *IncomingMessage) SetStreamContent(ch chan *StreamContent) {
-	m.streamContent = ch
-}
-
-func (m *IncomingMessage) SetStreamTool(ch chan *StreamTool) {
-	m.streamTool = ch
-}
-
-func (m *IncomingMessage) StreamContent() chan<- *StreamContent {
-	return m.streamContent
-}
-
-func (m *IncomingMessage) StreamTool() chan<- *StreamTool {
-	return m.streamTool
-}
-
-func (m *IncomingMessage) CloseStreamContent() {
-	if m.streamContent != nil {
-		close(m.streamContent)
+func (m *IncomingMessage) EmitContent(content *StreamContent) {
+	if m.OnContent != nil {
+		m.OnContent(content)
 	}
 }
 
-func (m *IncomingMessage) CloseStreamTool() {
-	if m.streamTool != nil {
-		close(m.streamTool)
+func (m *IncomingMessage) EmitTool(tool *StreamTool) {
+	if m.OnTool != nil {
+		m.OnTool(tool)
+	}
+}
+
+func (m *IncomingMessage) EmitDone() {
+	if m.OnDone != nil {
+		m.OnDone()
 	}
 }
 

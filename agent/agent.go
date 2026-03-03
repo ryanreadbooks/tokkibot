@@ -127,32 +127,16 @@ func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
 	return a.handleIncomingMessage(ctx, msg)
 }
 
-type AskStreamResultToolCall struct {
-	Round     int
-	Name      string
-	Arguments string
-}
-
-type AskStreamResultContent struct {
-	Round            int
-	Content          string
-	ReasoningContent string
-}
-
-type AskStreamResult struct {
-	Content  chan *AskStreamResultContent
-	ToolCall chan *AskStreamResultToolCall
+// StreamEmitter is the interface for emitting stream events
+type StreamEmitter interface {
+	EmitContent(round int, content, reasoning string)
+	EmitTool(round int, name, args string)
+	EmitDone()
 }
 
 // Handling incoming message in a streaming way
-func (a *Agent) AskStream(ctx context.Context, msg *UserMessage) *AskStreamResult {
-	res := AskStreamResult{
-		Content:  make(chan *AskStreamResultContent, 16),
-		ToolCall: make(chan *AskStreamResultToolCall, 16),
-	}
-	go a.handleIncomingMessageStream(ctx, msg, &res)
-
-	return &res
+func (a *Agent) AskStream(ctx context.Context, msg *UserMessage, emitter StreamEmitter) {
+	a.handleIncomingMessageStream(ctx, msg, emitter)
 }
 
 func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*schema.Request, error) {

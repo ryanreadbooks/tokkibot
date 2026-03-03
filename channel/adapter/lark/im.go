@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	imv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
+	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
@@ -173,5 +174,105 @@ func (a *LarkAdapter) recallMessage(ctx context.Context, messageId string) {
 	if !resp.Success() {
 		slog.ErrorContext(ctx, "failed to recall message", "error", resp.ErrorResp(), "request_id", resp.RequestId())
 		return
+	}
+}
+
+func (a *LarkAdapter) getMessage(ctx context.Context, messageId string) ([]*imv1.Message, error) {
+	req := imv1.NewGetMessageReqBuilder().
+		MessageId(messageId).
+		UserIdType(imv1.UserIdTypeOpenId).
+		Build()
+
+	resp, err := a.cli.Im.V1.Message.Get(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success() {
+		return nil, fmt.Errorf("failed to get message: %s", resp.ErrorResp())
+	}
+
+	return resp.Data.Items, nil
+}
+
+// parsedMessage represents a parsed message with content and attachments
+type parsedMessage struct {
+	Content     string
+	Attachments []*model.IncomingMessageAttachment
+}
+
+// getQuotedMessages retrieves the parsed content and attachments of quoted messages.
+// Returns a slice since getMessage may return multiple items.
+func (a *LarkAdapter) getQuotedMessages(ctx context.Context, messageId string) []*parsedMessage {
+	items, err := a.getMessage(ctx, messageId)
+	if err != nil || len(items) == 0 {
+		slog.WarnContext(ctx, "failed to get quoted message", "message_id", messageId, "error", err)
+		return nil
+	}
+
+	var results []*parsedMessage
+	for _, msg := range items {
+		if msg.Body == nil || msg.Body.Content == nil {
+			continue
+		}
+
+		msgType := ""
+		if msg.MsgType != nil {
+			msgType = *msg.MsgType
+		}
+
+		msgId := messageId
+		if msg.MessageId != nil {
+			msgId = *msg.MessageId
+		}
+
+		if parsed := a.parseMessageByType(ctx, msgId, msgType, *msg.Body.Content); parsed != nil {
+			results = append(results, parsed)
+		}
+	}
+
+	return results
+}
+
+// parseMessageByType parses message content based on message type.
+// This is the unified entry point for parsing any lark message.
+func (a *LarkAdapter) parseMessageByType(ctx context.Context, messageId, msgType, rawContent string) *parsedMessage {
+	var (
+		content     string
+		attachments []*model.IncomingMessageAttachment
+		err         error
+	)
+
+	// See: https://open.feishu.cn/document/server-docs/im-v1/message/get
+	// 卡片消息内容与在卡片搭建工具中获取的卡片 JSON 不一致，暂不支持返回原始卡片 JSON。
+	// 暂不支持返回 JSON 2.0 卡片的具体内容。
+
+	switch msgType {
+	case imv1.MsgTypeText:
+		content, err = a.handleTextMessage(rawContent)
+	case imv1.MsgTypePost:
+		content, attachments, err = a.handlePostMessage(ctx, rawContent, messageId)
+	case imv1.MsgTypeImage:
+		var imageKey string
+		var imageData []byte
+		imageKey, imageData, err = a.handleImageMessage(ctx, messageId, rawContent)
+		if err == nil && len(imageData) > 0 {
+			attachments = append(attachments, &model.IncomingMessageAttachment{
+				Key:  wrapResourceKey(imageKey),
+				Type: model.AttachmentImage,
+				Data: imageData,
+			})
+		}
+	default:
+		return nil
+	}
+
+	if err != nil {
+		slog.WarnContext(ctx, "failed to parse message", "message_id", messageId, "type", msgType, "error", err)
+		return nil
+	}
+
+	return &parsedMessage{
+		Content:     content,
+		Attachments: attachments,
 	}
 }

@@ -142,12 +142,11 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 		}
 	}
 
-	// memory prompts
-	memoryPrompt, err := c.memoryMgr.Load()
-	if err != nil {
-		return fmt.Errorf("failed to load memory prompts: %w", err)
+	// memory prompts (optional, not fatal if missing)
+	if memoryPrompt := c.memoryMgr.Load(); memoryPrompt != "" {
+		prompts.WriteString("\n\n")
+		prompts.WriteString(memoryPrompt)
 	}
-	prompts.WriteString(memoryPrompt)
 
 	c.systemPrompts = prompts.String()
 	c.systemPrompts = c.renderPrompts(c.systemPrompts)
@@ -271,6 +270,13 @@ func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]param.Message, e
 			unionParams = append(unionParams, un.ContentUnion)
 		}
 
+		if inMsg.Content != "" {
+			unionParams = append(unionParams, &param.ContentUnion{
+				Text: &param.Text{
+					Value: inMsg.Content,
+				},
+			})
+		}
 		msgParam = param.NewUserMessage(unionParams)
 	} else {
 		msgParam = param.NewUserMessage(inMsg.Content)
@@ -361,7 +367,13 @@ func (c *ContextManager) GetMessageContext(channel, chatId string) (
 
 	// In-memory logs already contain actual content (refs are only used for disk storage)
 	logs := log.GetLogs()
-	msgList := make([]param.Message, 0, len(logs))
+
+	// +1 for system prompt
+	msgList := make([]param.Message, 0, len(logs)+1)
+
+	// System prompt always goes first
+	msgList = append(msgList, param.NewSystemMessage(c.systemPrompts))
+
 	for _, log := range logs {
 		msgList = append(msgList, *log.Message)
 	}

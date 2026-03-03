@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
@@ -88,8 +89,8 @@ func (a *LarkAdapter) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case msg := <-a.output:
-			messageId, _ := msg.Metadata["message_id"].(string)
-			reactionId, _ := msg.Metadata["reaction_id"].(string)
+			messageId, _ := msg.Metadata[metaKeyMessageId].(string)
+			reactionId, _ := msg.Metadata[metaKeyReactionId].(string)
 			if messageId != "" && reactionId != "" {
 				// send new done reaction
 				a.sendMessageReaction(ctx, messageId, emoji.DONE)
@@ -107,15 +108,41 @@ func (a *LarkAdapter) Start(ctx context.Context) error {
 	}
 }
 
+// derefStr safely dereferences a string pointer, returning empty string if nil
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2MessageReceiveV1) error {
-	var (
-		// parse message
-		senderId       = *event.Event.Sender.SenderId.OpenId
-		messageId      = *event.Event.Message.MessageId
-		messageType    = *event.Event.Message.MessageType
-		chatId         = *event.Event.Message.ChatId
-		messageContent = *event.Event.Message.Content
-	)
+	if event.Event == nil || event.Event.Sender == nil || event.Event.Message == nil {
+		slog.ErrorContext(ctx, "invalid message event", "event", event)
+		return nil
+	}
+
+	msg := event.Event.Message
+	sender := event.Event.Sender
+
+	// safely extract sender id
+	var senderId string
+	if sender.SenderId != nil {
+		senderId = derefStr(sender.SenderId.OpenId)
+	}
+
+	// safely extract message fields
+	messageId := derefStr(msg.MessageId)
+	messageType := derefStr(msg.MessageType)
+	chatId := derefStr(msg.ChatId)
+	messageContent := derefStr(msg.Content)
+	parentId := derefStr(msg.ParentId)
+
+	// validate required fields
+	if senderId == "" || messageId == "" {
+		slog.ErrorContext(ctx, "missing required message fields", "sender_id", senderId, "message_id", messageId)
+		return nil
+	}
 
 	var (
 		content     string
@@ -162,6 +189,45 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		return nil
 	}
 
+	// generate placeholders for current message's attachments
+	if len(attachments) > 0 {
+		var placeholders []string
+		for i, att := range attachments {
+			placeholders = append(placeholders, fmt.Sprintf("[%s-%d]", att.Type, i+1))
+		}
+		if content == "" {
+			content = strings.Join(placeholders, " ")
+		} else {
+			content = fmt.Sprintf("%s %s", content, strings.Join(placeholders, " "))
+		}
+	}
+
+	// handle quoted messages: wrap each quoted content with <quote> tags
+	if parentId != "" {
+		if quotedList := a.getQuotedMessages(ctx, parentId); len(quotedList) > 0 {
+			for _, quoted := range quotedList {
+				quotedContent := quoted.Content
+				// generate placeholders for quoted message's attachments
+				if len(quoted.Attachments) > 0 {
+					var placeholders []string
+					for i, att := range quoted.Attachments {
+						idx := len(attachments) + i + 1
+						placeholders = append(placeholders, fmt.Sprintf("[%s-%d]", att.Type, idx))
+					}
+					if quotedContent == "" {
+						quotedContent = strings.Join(placeholders, " ")
+					} else {
+						quotedContent = fmt.Sprintf("%s %s", quotedContent, strings.Join(placeholders, " "))
+					}
+				}
+				if quotedContent != "" {
+					content = fmt.Sprintf("%s\n\n<quote>\n%s\n</quote>", content, quotedContent)
+				}
+				attachments = append(attachments, quoted.Attachments...)
+			}
+		}
+	}
+
 	if len(content) == 0 && len(attachments) == 0 {
 		slog.InfoContext(ctx, "no content and attachments in lark message", "message_id", messageId)
 		return nil
@@ -175,8 +241,15 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 	a.cancels[messageId] = sourceCancel
 	a.cancelMu.Unlock()
 
-	// enable streaming mode in lark for better user experience
-	streamOutput := make(chan *model.StreamContent)
+	// stream state for callbacks (init is delayed to first onContent)
+	state := &larkStreamState{
+		adapter:   a,
+		ctx:       sourceCtx,
+		messageId: messageId,
+		elementId: "markdown_1",
+		seq:       1,
+	}
+
 	incomingMsg := &model.IncomingMessage{
 		SenderId:    senderId,
 		Channel:     model.Lark,
@@ -184,82 +257,140 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		Content:     content,
 		Attachments: attachments,
 		Metadata: map[string]any{
-			"message_id":  messageId,
-			"reaction_id": reactionId,
+			metaKeyMessageId:  messageId,
+			metaKeyReactionId: reactionId,
 		},
 		SourceCtx: sourceCtx,
 		Stream:    true,
+		OnContent: state.onContent,
+		OnDone:    state.onDone,
 	}
-	incomingMsg.SetStreamContent(streamOutput)
 
 	a.input <- incomingMsg
-
-	go a.consumeGatewayStreamMessage(sourceCtx, incomingMsg, streamOutput)
 
 	return nil
 }
 
-func (a *LarkAdapter) consumeGatewayStreamMessage(
-	ctx context.Context,
-	incomingMsg *model.IncomingMessage,
-	streamOutput <-chan *model.StreamContent,
-) {
-	// accumulate content
-	var (
-		contentBuilder strings.Builder
-		seq            int    = 1
-		elementId      string = "markdown_1"
+const (
+	streamFlushInterval  = 300 * time.Millisecond
+	streamFlushThreshold = 256 // flush when accumulated content exceeds this
 
-		messageId               string = incomingMsg.Metadata["message_id"].(string)
-		reactionId              string = incomingMsg.Metadata["reaction_id"].(string)
-		streamSendEnabled       bool
-		replyMessageId          string
-		shouldRecallCardMessage bool
-	)
+	metaKeyMessageId  = "message_id"
+	metaKeyReactionId = "reaction_id"
+)
 
-	cardId, err := a.createCardEntityForStream(ctx, elementId)
-	slog.InfoContext(ctx, "created card entity for stream", "card_id", cardId, "error", err)
+type larkStreamState struct {
+	adapter   *LarkAdapter
+	ctx       context.Context
+	messageId string
+	elementId string
+
+	initOnce                sync.Once
+	mu                      sync.Mutex
+	contentBuilder          strings.Builder
+	reasoningContentBuilder strings.Builder
+	seq                     int
+	cardId                  string
+	replyMessageId          string
+	streamSendEnabled       bool
+	shouldRecallCardMessage bool
+
+	dirty      bool
+	lastSeqLen int
+	stopCh     chan struct{}
+}
+
+func (s *larkStreamState) init() {
+	cardId, err := s.adapter.createCardEntityForStream(s.ctx, s.elementId)
+	slog.InfoContext(s.ctx, "created card entity for stream", "card_id", cardId, "error", err)
 	if err == nil {
-		if replyMessageId, err = a.replyInteractiveCardMessage(ctx, messageId, cardId); err == nil {
-			slog.InfoContext(ctx, "replied interactive card message", "message_id", messageId, "card_id", cardId)
-			streamSendEnabled = true
+		replyMessageId, err := s.adapter.replyInteractiveCardMessage(s.ctx, s.messageId, cardId)
+		if err == nil {
+			slog.InfoContext(s.ctx, "replied interactive card message", "message_id", s.messageId, "card_id", cardId)
+			s.cardId = cardId
+			s.replyMessageId = replyMessageId
+			s.streamSendEnabled = true
+			s.stopCh = make(chan struct{})
+			go s.flushLoop()
 		}
 	} else {
-		slog.InfoContext(ctx, "failed to create card entity for stream", "error", err)
+		slog.InfoContext(s.ctx, "failed to create card entity for stream", "error", err)
+	}
+}
+
+func (s *larkStreamState) flushLoop() {
+	ticker := time.NewTicker(streamFlushInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.flush()
+		}
+	}
+}
+
+func (s *larkStreamState) flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.streamSendEnabled || !s.dirty {
+		return
 	}
 
-	for content := range streamOutput {
-		contentBuilder.WriteString(content.Content)
-		if streamSendEnabled {
-			// update card entity
-			err = a.updateCardEntityForStream(ctx, cardId, elementId, contentBuilder.String(), seq)
-			if err != nil {
-				shouldRecallCardMessage = true
-				streamSendEnabled = false // fallback
-			}
-			seq++
-		}
+	content := s.contentBuilder.String()
+	if len(content) == s.lastSeqLen {
+		return
 	}
 
-	if !streamSendEnabled {
-		if replyMessageId != "" && shouldRecallCardMessage {
-			a.recallMessage(ctx, replyMessageId)
+	err := s.adapter.updateCardEntityForStream(s.ctx, s.cardId, s.elementId, content, s.seq)
+	if err != nil {
+		s.shouldRecallCardMessage = true
+		s.streamSendEnabled = false
+		return
+	}
+	s.seq++
+	s.lastSeqLen = len(content)
+	s.dirty = false
+}
+
+func (s *larkStreamState) onContent(content *model.StreamContent) {
+	s.initOnce.Do(s.init)
+
+	s.mu.Lock()
+	s.contentBuilder.WriteString(content.Content)
+	s.reasoningContentBuilder.WriteString(content.ReasoningContent)
+	s.dirty = true
+	pendingLen := s.contentBuilder.Len() - s.lastSeqLen
+	s.mu.Unlock()
+
+	if pendingLen >= streamFlushThreshold {
+		s.flush()
+	}
+}
+
+func (s *larkStreamState) onDone() {
+	if s.stopCh != nil {
+		close(s.stopCh)
+	}
+
+	s.flush()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.streamSendEnabled {
+		if s.replyMessageId != "" && s.shouldRecallCardMessage {
+			s.adapter.recallMessage(s.ctx, s.replyMessageId)
 		}
-		// fallback to normal interactive message
-		a.SendChan() <- &model.OutgoingMessage{
-			SenderId: incomingMsg.SenderId,
-			Channel:  incomingMsg.Channel,
-			ChatId:   incomingMsg.ChatId,
-			Content:  contentBuilder.String(),
-			Metadata: map[string]any{
-				"message_id":  messageId,
-				"reaction_id": reactionId,
-			},
-		}
-		slog.InfoContext(ctx, "fallback to normal interactive message", "message_id", messageId)
+		s.adapter.replyInteractiveMessage(s.ctx, s.messageId, s.contentBuilder.String())
+		slog.InfoContext(s.ctx, "fallback to normal interactive message", "message_id", s.messageId)
 	} else {
-		// stop card stream
-		a.stopCardEntityStream(ctx, cardId, seq)
-		a.sendMessageReaction(ctx, messageId, emoji.DONE)
+		s.adapter.stopCardEntityStream(s.ctx, s.cardId, s.seq)
+		s.adapter.sendMessageReaction(s.ctx, s.messageId, emoji.DONE)
 	}
 }

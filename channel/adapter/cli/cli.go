@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,14 +16,6 @@ type CLIAdapter struct {
 
 	input  chan *model.IncomingMessage
 	output chan *model.OutgoingMessage
-
-	mu        sync.Mutex
-	callbacks map[string]*streamCallback
-}
-
-type streamCallback struct {
-	contentCh chan *model.StreamContent
-	toolCh    chan *model.StreamTool
 }
 
 type CLIConfig struct {
@@ -38,10 +29,9 @@ func NewAdapter(cfg CLIConfig) *CLIAdapter {
 	}
 
 	return &CLIAdapter{
-		chatID:    chatID,
-		input:     make(chan *model.IncomingMessage, 1),
-		output:    make(chan *model.OutgoingMessage, 16),
-		callbacks: make(map[string]*streamCallback),
+		chatID: chatID,
+		input:  make(chan *model.IncomingMessage, 1),
+		output: make(chan *model.OutgoingMessage, 16),
 	}
 }
 
@@ -75,15 +65,6 @@ func (a *CLIAdapter) SendUserMessage(ctx context.Context, content string) *SendM
 	contentCh := make(chan *model.StreamContent, 16)
 	toolCh := make(chan *model.StreamTool, 16)
 
-	msgID := uuid.New().String()
-
-	a.mu.Lock()
-	a.callbacks[msgID] = &streamCallback{
-		contentCh: contentCh,
-		toolCh:    toolCh,
-	}
-	a.mu.Unlock()
-
 	msg := &model.IncomingMessage{
 		Channel:   model.CLI,
 		ChatId:    a.chatID,
@@ -92,11 +73,25 @@ func (a *CLIAdapter) SendUserMessage(ctx context.Context, content string) *SendM
 		SourceCtx: ctx,
 		Stream:    true,
 		Metadata: map[string]any{
-			"message_id": msgID,
+			"message_id": uuid.New().String(),
+		},
+		OnContent: func(c *model.StreamContent) {
+			select {
+			case contentCh <- c:
+			case <-ctx.Done():
+			}
+		},
+		OnTool: func(t *model.StreamTool) {
+			select {
+			case toolCh <- t:
+			case <-ctx.Done():
+			}
+		},
+		OnDone: func() {
+			close(contentCh)
+			close(toolCh)
 		},
 	}
-	msg.SetStreamContent(contentCh)
-	msg.SetStreamTool(toolCh)
 
 	select {
 	case a.input <- msg:

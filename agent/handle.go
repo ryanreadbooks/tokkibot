@@ -106,14 +106,11 @@ func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) schema.Str
 	}
 }
 
-func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMessage, result *AskStreamResult) {
+func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMessage, emitter StreamEmitter) {
+	defer emitter.EmitDone()
+
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
-		result.Content <- &AskStreamResultContent{
-			Round:   -1,
-			Content: err.Error(),
-		}
-		close(result.ToolCall)
-		close(result.Content)
+		emitter.EmitContent(-1, err.Error(), "")
 		return
 	}
 
@@ -123,10 +120,7 @@ mainLoop:
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
-			result.Content <- &AskStreamResultContent{
-				Round:   curIter,
-				Content: fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()),
-			}
+			emitter.EmitContent(curIter, fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()), "")
 			break mainLoop
 		default:
 		}
@@ -140,10 +134,7 @@ mainLoop:
 
 		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
-			result.Content <- &AskStreamResultContent{
-				Round:   curIter,
-				Content: err.Error(),
-			}
+			emitter.EmitContent(curIter, err.Error(), "")
 			break
 		}
 		// call llm the stream way
@@ -153,54 +144,36 @@ mainLoop:
 
 		wg.Go(func() {
 			for content := range streamPacked.Content {
-				result.Content <- &AskStreamResultContent{
-					Round:            curIter,
-					Content:          content.Content,
-					ReasoningContent: content.ReasoningContent,
-				}
+				emitter.EmitContent(curIter, content.Content, content.ReasoningContent)
 				contentBuilder.WriteString(content.Content)
 				reasoningContentBuilder.WriteString(content.ReasoningContent)
 			}
 		})
 
 		wg.Go(func() {
-			// Track tool calls by ID to accumulate arguments
-			// Use ID as unique identifier to handle multiple calls to same tool
-			toolCallsMap := make(map[string]*AskStreamResultToolCall)
-			toolCallOrder := make([]string, 0) // preserve order (store IDs)
+			type toolCallAcc struct {
+				Name string
+				Args strings.Builder
+			}
+			toolCallsMap := make(map[string]*toolCallAcc)
+			toolCallOrder := make([]string, 0)
 
 			for toolCall := range streamPacked.ToolCall {
 				tc, exists := toolCallsMap[toolCall.Id]
 				if !exists {
-					// New tool call - send initial notification
-					tc = &AskStreamResultToolCall{
-						Round:     curIter,
-						Name:      toolCall.Name,
-						Arguments: toolCall.ArgumentFragment,
-					}
+					tc = &toolCallAcc{Name: toolCall.Name}
+					tc.Args.WriteString(toolCall.ArgumentFragment)
 					toolCallsMap[toolCall.Id] = tc
 					toolCallOrder = append(toolCallOrder, toolCall.Id)
-
-					// Send initial notification (name only, empty args)
-					result.ToolCall <- &AskStreamResultToolCall{
-						Round:     curIter,
-						Name:      toolCall.Name,
-						Arguments: "", // empty = collecting
-					}
+					emitter.EmitTool(curIter, toolCall.Name, "")
 				} else {
-					// Accumulate arguments for existing tool call
-					tc.Arguments += toolCall.ArgumentFragment
+					tc.Args.WriteString(toolCall.ArgumentFragment)
 				}
 			}
 
-			// Send complete tool calls with full arguments in order
 			for _, id := range toolCallOrder {
 				tc := toolCallsMap[id]
-				result.ToolCall <- &AskStreamResultToolCall{
-					Round:     curIter,
-					Name:      tc.Name,
-					Arguments: tc.Arguments,
-				}
+				emitter.EmitTool(curIter, tc.Name, tc.Args.String())
 			}
 		})
 
@@ -211,38 +184,27 @@ mainLoop:
 			assistantTcs = append(assistantTcs, tcr.tc)
 		}
 
-		// accumulate assistant message for this iteration
 		err = a.contextMgr.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
 			Content:          contentBuilder.String(),
 			ToolCalls:        assistantTcs,
 			ReasoningContent: reasoningContentBuilder.String(),
 		})
 		if err != nil {
-			result.Content <- &AskStreamResultContent{
-				Round:   curIter,
-				Content: err.Error(),
-			}
+			emitter.EmitContent(curIter, err.Error(), "")
 			break
 		}
 
 		if len(dstTcs) == 0 {
-			// no tool calls
 			break
 		}
 
 		for _, tcr := range dstTcs {
 			if err := a.contextMgr.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
-				result.Content <- &AskStreamResultContent{
-					Round:   curIter,
-					Content: err.Error(),
-				}
+				emitter.EmitContent(curIter, err.Error(), "")
 				break mainLoop
 			}
 		}
 	}
-
-	close(result.ToolCall)
-	close(result.Content)
 }
 
 func (a *Agent) handleToolCall(

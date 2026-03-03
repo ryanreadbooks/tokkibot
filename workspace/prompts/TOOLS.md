@@ -1,256 +1,202 @@
-# Tools
+# Tools Reference
 
-You have access to the following tools to help accomplish tasks.
+## Response Format
 
-Tool calls have universial output json format:
-
-- `success` (required): Indicating whether tool call succeeded.
-- `data`: Tool call output data.
-- `err`: Tool call error message, empty if tool call is successful.
-  **Example**:
+All tools return JSON with this structure:
 
 ```json
 {
-	"success": true,
-	"data": "tool call output, can be empty",
-	"err": "tool call error message, may be empty."
+  "success": true,
+  "data": "...",
+  "err": ""
 }
 ```
+
+Always check `success` before using `data`. If `success` is false, handle the error in `err`.
+
+---
 
 ## read_file
 
-Read the contents of a file at the given path. Output always include numbers in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content by specifying line offset and limit for large files.
+Read file contents with line numbers.
 
-**Parameters:**
-
-- `path` (required): The path to the file to read from
-- `offset` (optional): Starting line number (1-indexed). Use for large files to read from specific line
-- `limit`: (optional): Number of lines to read. Use with offset for large files to read in chunks
-
-**Example:**
-
-Read regular file:
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `path` | Yes | Absolute path to file |
+| `offset` | No | Starting line (1-indexed) |
+| `limit` | No | Number of lines to read |
 
 ```json
-{
-	"path": "/path/to/file.txt"
-}
+{ "path": "/path/to/file.txt" }
 ```
+
+Output format: `LINE_NUMBER|LINE_CONTENT` per line.
+
+---
 
 ## write_file
 
-Write content to a file at the given path. Creates parent directories if necessary.
+Create or overwrite a file. Creates parent directories automatically.
 
-**Parameters:**
-
-- `path` (required): The path to the file to write to
-- `content` (required): The content to write to the file
-
-**Example:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `path` | Yes | Absolute path to file |
+| `content` | Yes | Content to write |
 
 ```json
-{
-	"path": "/path/to/file.txt",
-	"content": "Hello, World!"
-}
+{ "path": "/path/to/file.txt", "content": "Hello" }
 ```
 
-## list_dir
+⚠️ **Warning**: This overwrites the entire file. Use `edit_file` for modifications.
 
-List the contents of a directory.
-
-**Parameters:**
-
-- `path` (required): The path to the directory to list
-
-**Example:**
-
-```json
-{
-	"path": "/path/to/directory"
-}
-```
-
-**Output format:**
-
-- 📁 prefix indicates a directory
-- 📄 prefix indicates a file
+---
 
 ## edit_file
 
-Edit the content of a file at given path by replacing the specific string in the file.
+Replace specific text in a file. Safer than `write_file` for modifications.
 
-**Parameters:**
-
-- `file_name` (required): The file to be edited.
-- `new_string` (required): The new string to replace the old string with.
-- `old_string` (required): The old string to replace
-- `replace_all` (optional): Replace all old_string with new_string.
-
-**Example:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `file_name` | Yes | Absolute path to file |
+| `old_string` | Yes | Text to find (must be unique) |
+| `new_string` | Yes | Replacement text |
+| `replace_all` | No | Replace all occurrences (default: false) |
 
 ```json
 {
-	"file_name": "/path/to/file",
-	"new_string": "Hello world",
-	"old_string": "Good morning"
+  "file_name": "/path/to/file",
+  "old_string": "foo",
+  "new_string": "bar"
 }
 ```
 
-## load_ref
+**Best practice**: Include enough context in `old_string` to make it unique.
 
-Load content from a previously stored reference (e.g., tool call results). 
-Use this when you need to re-access large/structured data without repeating the original tool call.
+---
 
-**Parameters:**
+## list_dir
 
-- `name` (required): The reference identifier to load. Format: `@refs/{id}`
+List directory contents.
 
-**Example:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `path` | Yes | Absolute path to directory |
 
 ```json
-{
-	"name": "@refs/abcok091Z"
-}
+{ "path": "/path/to/directory" }
 ```
+
+Output uses prefixes: `📁` for directories, `📄` for files.
+
+---
 
 ## shell
 
-Execute a shell command under the optional given working directory.
+Execute a shell command.
 
-**Parameters:**
-
-- `command` (required): The command to execute along with its arguments
-- `working_dir` (optional): The working directory to execute the command in, current working directory will be used if not provided
-
-**Example:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `command` | Yes | Command to execute |
+| `working_dir` | No | Working directory (default: cwd) |
 
 ```json
-{
-	"command": "ls -la",
-	"working_dir": "/home/user/project"
-}
+{ "command": "git status", "working_dir": "/project" }
 ```
 
-**Notes:**
+**Limits:**
+- Max execution time: 60 seconds
+- Max output: 15000 characters
+- Dangerous commands are blocked
 
-- Dangerous commands are blocked for safety (e.g., `rm -rf`, `shutdown`)
-- On error, output is wrapped in `<shell_blocked>` (command rejected) or `<shell_run_error>` (execution failed) tags
-- Output longer than 15000 characters will be truncated
-- Max execution time is 60 seconds
+**When to use shell vs other tools:**
+- Use `read_file` instead of `cat`
+- Use `list_dir` instead of `ls`
+- Use `shell` for: git, npm, pip, grep, compilation, etc.
+
+---
+
+## load_ref
+
+Load a previously stored reference.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Reference ID (format: `@refs/{id}`) |
+
+```json
+{ "name": "@refs/abc123" }
+```
+
+Use when tool output was truncated and stored as a reference.
+
+---
 
 ## use_skill
 
-Use a skill by name and perform an action on it. Skills extend your capabilities with domain-specific knowledge, resources, or scripts.
+Interact with skills for specialized capabilities.
 
-**Parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Skill name |
+| `action` | Yes | `activate`, `load`, or `script` |
+| `args` | For load/script | Action arguments |
 
-- `name` (required): The name of the skill to use
-- `action` (required): The action to perform, one of:
-  - `activate` - Load the full skill content from SKILL.md
-  - `load` - Load specified resources (references, assets, etc.)
-  - `script` - Execute a script defined in the skill
-- `args` (required for `load`, `script`): Arguments for the action. Comma-separated paths for load (e.g., `references/guide.md,assets/template.yaml`), command line for script
+**Actions:**
 
-**Examples:**
-
-Activate a skill:
-
-```json
-{ "name": "name_of_skill", "action": "activate" }
-```
-
-Load specific resources:
+| Action | Purpose | Args |
+|--------|---------|------|
+| `activate` | Load skill instructions | None |
+| `load` | Get specific resources | Comma-separated paths |
+| `script` | Run automation | Command line |
 
 ```json
-{ "name": "name_of_skill", "action": "load", "args": "references/deployment.md,assets/dockerfile" }
+{ "name": "my-skill", "action": "activate" }
+{ "name": "my-skill", "action": "load", "args": "references/guide.md" }
+{ "name": "my-skill", "action": "script", "args": "python analyze.py" }
 ```
 
-Execute a skill script:
-
-```json
-{ "name": "name_of_skill", "action": "script", "args": "python analyze.py --target src/" }
-```
-
-**Notes:**
-
-- Skills are loaded from system workspace (`~/.tokkibot/skills/`) or project directory (`.tokkibot/skills/`)
-- Project skills take precedence over system skills with the same name
-- Use `activate` first to understand what a skill offers before using other actions
-- Only use skills that have been explicitly loaded or listed as available
+---
 
 ## web_fetch
 
-Fetch content from a URL and convert it to a readable format. Automatically handles different content types with intelligent processing.
+Fetch and convert web content.
 
-**When to use:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `url` | Yes | URL (http:// or https://) |
 
-- Retrieve documentation, API references, or technical guides from the web
-- Access online code examples, tutorials, or configuration samples
-- Fetch external resources referenced by the user (links shared in conversation)
-- Download remote configuration files, schemas, or templates
-- Verify online content or check current state of web pages
+```json
+{ "url": "https://example.com/page" }
+```
 
-**Parameters:**
-
-- `url` (required): The URL to fetch (must be http:// or https://)
-
-**Example:**
+**Output:**
 
 ```json
 {
-	"url": "https://example.com/page"
+  "content": "...",
+  "content_type": "text/html",
+  "status_code": 200,
+  "truncated": false,
+  "is_binary": false
 }
 ```
 
-**Output format:**
+**Behavior:**
+- HTML → converted to markdown
+- JSON/Text → returned as-is
+- Binary → base64url encoded
 
-```json
-{
-	"content": "The fetched content (text or base64url-encoded binary)",
-	"truncated": false,
-	"is_binary": false,
-	"content_type": "text/html; charset=utf-8",
-	"status_code": 200
-}
-```
+**Limits:** 30s timeout, 10MB max, 50000 chars output
 
-- `content`: The fetched content (text or base64url-encoded binary)
-- `truncated`: Boolean indicating if content was truncated (max 50000 characters)
-- `is_binary`: Boolean indicating if content is binary data
-- `content_type`: The Content-Type header from response
-- `status_code`: The HTTP status code (200, 404, etc.)
+---
 
-**Behavior by content type:**
+## Quick Reference
 
-- **HTML** (`text/html`): Converted to markdown format, `<script>` and `<style>` tags removed, excessive newlines cleaned
-- **Text formats**: Plain text, XML, CSS, JavaScript, YAML returned as-is
-- **JSON** (`application/json`): Returned as-is
-- **Binary** (images, PDFs, etc.): Returned as base64url-encoded string with `is_binary: true`
-
-**Safety limits:**
-
-- Maximum timeout: 30 seconds
-- Maximum redirects: 5
-- Maximum content size: 10MB
-- Output truncated if exceeds 50000 characters
-- HTTP errors (4xx, 5xx) return error message
-
-**Notes:**
-
-- Only supports http:// and https:// schemes
-- Automatically detects content type if not provided by server
-- HTML converted to markdown for easier reading and processing
-- Binary data encoded as base64url for safe transmission
-
-## Tool Usage Guidelines
-
-1. **Prefer specific tools over shell**: Use `read_file`, `write_file`, `list_dir` instead of shell equivalents like `cat`, `echo >`, `ls` when possible.
-
-2. **Check before write**: Use `read_file` or `list_dir` to understand the current state before making changes.
-
-3. **Handle errors gracefully**: Tools may return errors, always check the result before proceeding.
-
-4. **Path handling**: Use absolute paths when possible for clarity and reliability.
-
-5. **Scenarios**: You can use shell command like grep to find specific text in a file, etc.
+| Task | Tool | Example |
+|------|------|---------|
+| Read a file | `read_file` | `{"path": "/file.txt"}` |
+| Modify a file | `edit_file` | `{"file_name": "/file.txt", "old_string": "a", "new_string": "b"}` |
+| Create a file | `write_file` | `{"path": "/new.txt", "content": "..."}` |
+| List files | `list_dir` | `{"path": "/dir"}` |
+| Run command | `shell` | `{"command": "git status"}` |
+| Fetch URL | `web_fetch` | `{"url": "https://..."}` |

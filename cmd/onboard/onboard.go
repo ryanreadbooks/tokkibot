@@ -115,6 +115,61 @@ func bootstrapPrompts(workspaceDir string) error {
 	return nil
 }
 
+func bootstrapMemory(workspaceDir string) error {
+	targetMemoryPath := filepath.Join(workspaceDir, "memory")
+	if _, err := os.Stat(targetMemoryPath); os.IsNotExist(err) {
+		err = os.MkdirAll(targetMemoryPath, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create memory directory at %s: %w", targetMemoryPath, err)
+		}
+	}
+
+	targetMemoryDir, err := os.ReadDir(targetMemoryPath)
+	if err != nil {
+		return fmt.Errorf("failed to read memory directory at %s: %w", targetMemoryPath, err)
+	}
+
+	doInit := true
+	if len(targetMemoryDir) > 0 {
+		fmt.Printf("Memory files already exist at %s, do you want to overwrite them? (y/n): ", targetMemoryPath)
+		var overwrite string
+		fmt.Scanln(&overwrite)
+		if overwrite != "y" && overwrite != "Y" {
+			doInit = false
+		}
+	}
+
+	if !doInit {
+		return nil
+	}
+
+	memoryFiles, err := workspace.MemoryFs.ReadDir("memory")
+	if err != nil {
+		return fmt.Errorf("failed to read memory files: %w", err)
+	}
+
+	for _, memoryFile := range memoryFiles {
+		if memoryFile.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join("memory", memoryFile.Name())
+		content, err := workspace.MemoryFs.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to read memory file %s: %w", filePath, err)
+		}
+
+		err = os.WriteFile(filepath.Join(targetMemoryPath, memoryFile.Name()), content, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write memory file %s: %w", filePath, err)
+		}
+	}
+
+	fmt.Printf("Memory files written to %s\n", targetMemoryPath)
+
+	return nil
+}
+
 func runOnboard(_ []string) error {
 	configPath, err := config.GetWorkspaceConfigPath()
 	if err != nil {
@@ -135,6 +190,10 @@ func runOnboard(_ []string) error {
 
 	if err := bootstrapPrompts(workspaceDir); err != nil {
 		return fmt.Errorf("failed to bootstrap prompts: %w", err)
+	}
+
+	if err := bootstrapMemory(workspaceDir); err != nil {
+		return fmt.Errorf("failed to bootstrap memory: %w", err)
 	}
 
 	return nil

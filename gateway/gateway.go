@@ -10,7 +10,6 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent"
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
-	"github.com/ryanreadbooks/tokkibot/pkg/misc"
 )
 
 type Gateway struct {
@@ -145,43 +144,31 @@ func (g *Gateway) workerDoStream(
 	userMessage *agent.UserMessage,
 	_ chadapter.Adapter,
 ) {
-	streamResult := g.agent.AskStream(rawMsg.Context(), userMessage)
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		if rawMsg.StreamTool() == nil {
-			misc.DiscardChan(streamResult.ToolCall)
-		} else {
-			for tool := range streamResult.ToolCall {
-				rawMsg.StreamTool() <- &chmodel.StreamTool{
-					Round:     tool.Round,
-					Name:      tool.Name,
-					Arguments: tool.Arguments,
-				}
-			}
-			rawMsg.CloseStreamTool()
-		}
+	emitter := &msgEmitter{msg: rawMsg}
+	g.agent.AskStream(rawMsg.Context(), userMessage, emitter)
+}
+
+// msgEmitter adapts IncomingMessage to agent.StreamEmitter
+type msgEmitter struct {
+	msg *chmodel.IncomingMessage
+}
+
+func (e *msgEmitter) EmitContent(round int, content, reasoning string) {
+	e.msg.EmitContent(&chmodel.StreamContent{
+		Round:            round,
+		Content:          content,
+		ReasoningContent: reasoning,
 	})
+}
 
-	wg.Go(func() {
-		if rawMsg.StreamContent() == nil {
-			misc.DiscardChan(streamResult.Content)
-		} else {
-			for content := range streamResult.Content {
-				rawMsg.StreamContent() <- &chmodel.StreamContent{
-					Round:            content.Round,
-					Content:          content.Content,
-					ReasoningContent: content.ReasoningContent,
-
-					// metadata from incoming message
-					SenderId: rawMsg.SenderId,
-					Channel:  rawMsg.Channel,
-					ChatId:   rawMsg.ChatId,
-					Metadata: rawMsg.Metadata,
-				}
-			}
-			rawMsg.CloseStreamContent()
-		}
+func (e *msgEmitter) EmitTool(round int, name, args string) {
+	e.msg.EmitTool(&chmodel.StreamTool{
+		Round:     round,
+		Name:      name,
+		Arguments: args,
 	})
+}
 
-	wg.Wait()
+func (e *msgEmitter) EmitDone() {
+	e.msg.EmitDone()
 }
