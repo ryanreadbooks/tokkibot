@@ -72,7 +72,7 @@ func (i *LogItem) UnmarshalJSON(data []byte) error {
 	}
 
 	for _, part := range i.Message.User.ContentParts {
-		if part == nil {
+		if part == nil || part.ImageURL == nil {
 			continue
 		}
 

@@ -405,6 +405,24 @@ func (s *ContextManager) InitSession(channel, chatId string) error {
 	return nil
 }
 
+// ClearSession clears all messages in a session (keeps system prompt)
+func (s *ContextManager) ClearSession(channel, chatId string) error {
+	contextLog, err := s.contextLogManager.GetOrCreate(channel, chatId)
+	if err != nil {
+		return err
+	}
+
+	// clear context log (in-memory)
+	contextLog.ResetLogsFromMessage(nil)
+
+	// flush to disk
+	if err := contextLog.Flush(s.contextLogManager.Workspace); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // CompressToolCalls compresses tool call result messages in the context to ref files
 func (c *ContextManager) CompressToolCalls(channel, chatId string, count int) (int, error) {
 	contextLog, err := c.contextLogManager.GetOrCreate(channel, chatId)

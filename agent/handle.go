@@ -10,6 +10,11 @@ import (
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
+// formatCancelledError formats the context cancellation error message
+func formatCancelledError(ctx context.Context) string {
+	return fmt.Sprintf("(operation cancelled by user: %s)", ctx.Err().Error())
+}
+
 // initMessageContext initializes session logs and appends the user message
 func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) error {
 	a.contextMgr.InitFromSessionLogs(userMsg.Channel, userMsg.ChatId)
@@ -27,7 +32,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
-			return fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error())
+			return formatCancelledError(ctx)
 		default:
 		}
 
@@ -52,13 +57,9 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		}
 
 		if choice.HasToolCalls() {
+			// IMPORTANT: must complete all tool calls to match assistant's tool_calls
+			// even if ctx is cancelled, we need to save all tool results
 			for _, tc := range choice.Message.ToolCalls {
-				select {
-				case <-ctx.Done():
-					return fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error())
-				default:
-				}
-
 				if err := a.handleToolCall(ctx, userMsg, &tc); err != nil {
 					return err.Error()
 				}
@@ -120,7 +121,7 @@ mainLoop:
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
-			emitter.EmitContent(curIter, fmt.Sprintf("(operation cancelled: %s)", ctx.Err().Error()), "")
+			emitter.EmitContent(curIter, formatCancelledError(ctx), "")
 			break mainLoop
 		default:
 		}
@@ -139,8 +140,11 @@ mainLoop:
 		}
 		// call llm the stream way
 		llmRespCh := a.llm.ChatCompletionStream(ctx, llmReq)
-		streamPacked := schema.StreamResponseHandler(ctx,
-			llmRespCh, a.handleStreamingToolCall(&dstTcs))
+		streamPacked := schema.StreamResponseHandler(
+			ctx,
+			llmRespCh,
+			a.handleStreamingToolCall(&dstTcs),
+		)
 
 		wg.Go(func() {
 			for content := range streamPacked.Content {
@@ -171,6 +175,13 @@ mainLoop:
 				}
 			}
 
+			// check if interrupted - if so, don't emit incomplete tool args
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			for _, id := range toolCallOrder {
 				tc := toolCallsMap[id]
 				emitter.EmitTool(curIter, tc.Name, tc.Args.String())
@@ -198,6 +209,8 @@ mainLoop:
 			break
 		}
 
+		// IMPORTANT: must save all tool results to match assistant's tool_calls
+		// even if ctx is cancelled, we need to complete the tool call sequence
 		for _, tcr := range dstTcs {
 			if err := a.contextMgr.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
 				emitter.EmitContent(curIter, err.Error(), "")
@@ -219,6 +232,12 @@ func (a *Agent) handleToolCall(
 }
 
 func (a *Agent) getToolAndInvoke(ctx context.Context, tc *schema.CompletionToolCall) string {
+	select {
+	case <-ctx.Done():
+		return formatCancelledError(ctx)
+	default:
+	}
+
 	a.toolsMu.RLock()
 	tool, ok := a.tools[tc.Function.Name]
 	if !ok {

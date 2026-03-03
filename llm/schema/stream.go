@@ -235,6 +235,14 @@ func readStreamResponseChunk(
 		}
 	}
 
+	// only call tool handlers if ctx is not cancelled
+	// this allows quick exit when user sends /stop
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	if len(tcBuffers) > 0 {
 		if onToolAccumulated != nil {
 			// sort by index

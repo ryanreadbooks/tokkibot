@@ -232,3 +232,27 @@ func (a *Agent) buildLLMTools() []param.Tool {
 
 	return params
 }
+
+// ClearSession clears all messages in a session
+func (a *Agent) ClearSession(channel, chatId string) error {
+	return a.contextMgr.ClearSession(channel, chatId)
+}
+
+// CompactSession forces context compaction for a session
+func (a *Agent) CompactSession(ctx context.Context, channel, chatId string) (int, error) {
+	providerCfg := config.GetConfig().Providers[a.c.Provider]
+
+	// Step 1: Compress tool calls
+	compressed, err := a.contextMgr.CompressToolCalls(channel, chatId, providerCfg.ToolCallCompressThreshold)
+	if err != nil {
+		return 0, fmt.Errorf("failed to compress tool calls: %w", err)
+	}
+
+	// Step 2: Summarize history
+	err = a.contextMgr.SummarizeHistory(ctx, channel, chatId, a.summarizeMessagesWithLLM)
+	if err != nil {
+		return compressed, fmt.Errorf("failed to summarize history: %w", err)
+	}
+
+	return compressed, nil
+}

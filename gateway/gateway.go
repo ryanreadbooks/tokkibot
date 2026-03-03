@@ -19,6 +19,10 @@ type Gateway struct {
 	poolMu   sync.Mutex
 	pools    map[string]*ants.Pool
 
+	// running tasks cancel functions, key: "channel:chatId"
+	runningMu sync.RWMutex
+	running   map[string]context.CancelFunc
+
 	verbose bool
 }
 
@@ -33,6 +37,7 @@ func NewGateway(ctx context.Context) (*Gateway, error) {
 		agent:    ag,
 		pools:    pools,
 		adapters: make(map[chmodel.Type]chadapter.Adapter),
+		running:  make(map[string]context.CancelFunc),
 	}
 
 	return gateway, nil
@@ -90,6 +95,11 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 				slog.Info("received message", "adapter", adapter.Type(), "message", rawMsg)
 			}
 
+			// check for control commands first
+			if cmd := parseControlCommand(rawMsg.Content); g.handleControl(rawMsg, cmd) {
+				continue
+			}
+
 			g.poolMu.Lock()
 			poolKey := fmt.Sprintf("%s:%s", rawMsg.Channel, rawMsg.ChatId)
 			pool, ok := g.pools[poolKey]
@@ -108,11 +118,26 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 				Attachments: attachments,
 			}
 
+			// create cancellable context for this task
+			taskCtx, taskCancel := context.WithCancel(rawMsg.Context())
+
+			// store cancel function for /stop command
+			g.runningMu.Lock()
+			g.running[poolKey] = taskCancel
+			g.runningMu.Unlock()
+
 			pool.Submit(func() {
+				defer func() {
+					// cleanup cancel function when task completes
+					g.runningMu.Lock()
+					delete(g.running, poolKey)
+					g.runningMu.Unlock()
+				}()
+
 				if rawMsg.Stream {
-					g.workerDoStream(rawMsg, userMessage, adapter)
+					g.workerDoStream(taskCtx, rawMsg, userMessage, adapter)
 				} else {
-					g.workerDo(rawMsg, userMessage, adapter)
+					g.workerDo(taskCtx, rawMsg, userMessage, adapter)
 				}
 			})
 		}
@@ -120,11 +145,12 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 }
 
 func (g *Gateway) workerDo(
+	ctx context.Context,
 	rawMsg *chmodel.IncomingMessage,
 	userMessage *agent.UserMessage,
 	adapter chadapter.Adapter,
 ) {
-	result := g.agent.Ask(rawMsg.Context(), userMessage)
+	result := g.agent.Ask(ctx, userMessage)
 
 	// send result back to adapter
 	select {
@@ -140,12 +166,13 @@ func (g *Gateway) workerDo(
 }
 
 func (g *Gateway) workerDoStream(
+	ctx context.Context,
 	rawMsg *chmodel.IncomingMessage,
 	userMessage *agent.UserMessage,
 	_ chadapter.Adapter,
 ) {
 	emitter := &msgEmitter{msg: rawMsg}
-	g.agent.AskStream(rawMsg.Context(), userMessage, emitter)
+	g.agent.AskStream(ctx, userMessage, emitter)
 }
 
 // msgEmitter adapts IncomingMessage to agent.StreamEmitter
