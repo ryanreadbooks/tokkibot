@@ -19,9 +19,11 @@ type StreamTool struct {
 }
 
 // Callback handlers for streaming
-type StreamContentHandler func(*StreamContent)
-type StreamToolHandler func(*StreamTool)
-type StreamDoneHandler func()
+type (
+	StreamContentHandler func(*StreamContent)
+	StreamToolHandler    func(*StreamTool)
+	StreamDoneHandler    func()
+)
 
 type IncomingMessage struct {
 	SenderId    string
@@ -36,7 +38,7 @@ type IncomingMessage struct {
 	SourceCtx context.Context
 
 	// Enable streaming response
-	Stream    bool
+	Stream bool
 
 	// Stream callbacks - adapter implements these
 	OnContent StreamContentHandler
@@ -89,11 +91,10 @@ func (m *IncomingMessage) Key() string {
 	return fmt.Sprintf("%s:%s", m.Channel, m.ChatId)
 }
 
-// TODO add more field
 type OutgoingMessage struct {
-	SenderId string
-	Channel  Type
-	ChatId   string
-	Content  string
-	Metadata map[string]any
+	ReceiverId string
+	Channel    Type
+	ChatId     string
+	Content    string
+	Metadata   map[string]any
 }

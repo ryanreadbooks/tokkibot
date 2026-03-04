@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/ryanreadbooks/tokkibot/cmd/agent"
+	"github.com/ryanreadbooks/tokkibot/cmd/cron"
 	"github.com/ryanreadbooks/tokkibot/cmd/gateway"
 	"github.com/ryanreadbooks/tokkibot/cmd/onboard"
 	"github.com/ryanreadbooks/tokkibot/config"
@@ -19,6 +20,7 @@ func init() {
 	rootCmd.AddCommand(agent.AgentCmd)
 	rootCmd.AddCommand(onboard.OnboardCmd)
 	rootCmd.AddCommand(gateway.GatewayCmd)
+	rootCmd.AddCommand(cron.CronCmd)
 }
 
 func main() {

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/ryanreadbooks/tokkibot/agent"
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/cron"
 )
 
 type Gateway struct {
@@ -22,6 +24,9 @@ type Gateway struct {
 	// running tasks cancel functions, key: "channel:chatId"
 	runningMu sync.RWMutex
 	running   map[string]context.CancelFunc
+
+	// cron manager
+	cronMgr *cron.Manager
 
 	verbose bool
 }
@@ -38,6 +43,15 @@ func NewGateway(ctx context.Context) (*Gateway, error) {
 		pools:    pools,
 		adapters: make(map[chmodel.Type]chadapter.Adapter),
 		running:  make(map[string]context.CancelFunc),
+		cronMgr:  cron.NewManager(),
+	}
+
+	// set cron task handler
+	gateway.cronMgr.SetHandler(gateway.handleCronTask)
+
+	// load cron tasks
+	if err := gateway.cronMgr.Load(); err != nil {
+		slog.Warn("failed to load cron tasks", "error", err)
 	}
 
 	return gateway, nil
@@ -65,6 +79,11 @@ func StartGateway(ctx context.Context) error {
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
+	// schedule and start cron tasks
+	g.cronMgr.ScheduleAll()
+	g.cronMgr.Start()
+	defer g.cronMgr.Stop()
+
 	for _, adapter := range g.adapters {
 		if g.verbose {
 			slog.Info(fmt.Sprintf("channel %s begin to run...", adapter.Type()))
@@ -92,7 +111,11 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 			return
 		case rawMsg := <-adapter.ReceiveChan():
 			if g.verbose {
-				slog.Info("received message", "adapter", adapter.Type(), "message", rawMsg)
+				slog.Info("received message", "adapter", adapter.Type(),
+					"sender_id", rawMsg.SenderId,
+					"message", rawMsg.Content,
+					"chat_id", rawMsg.ChatId,
+					"attachements", len(rawMsg.Attachments))
 			}
 
 			// check for control commands first
@@ -155,11 +178,11 @@ func (g *Gateway) workerDo(
 	// send result back to adapter
 	select {
 	case adapter.SendChan() <- &chmodel.OutgoingMessage{
-		SenderId: rawMsg.SenderId,
-		Channel:  rawMsg.Channel,
-		ChatId:   rawMsg.ChatId,
-		Content:  result,
-		Metadata: rawMsg.Metadata,
+		ReceiverId: rawMsg.SenderId,
+		Channel:    rawMsg.Channel,
+		ChatId:     rawMsg.ChatId,
+		Content:    result,
+		Metadata:   rawMsg.Metadata,
 	}:
 	default:
 	}
@@ -198,4 +221,44 @@ func (e *msgEmitter) EmitTool(round int, name, args string) {
 
 func (e *msgEmitter) EmitDone() {
 	e.msg.EmitDone()
+}
+
+// handleCronTask handles a triggered cron task
+func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
+	chatId := task.ChatId()
+
+	// construct user message from cron task (use "cron" as channel for all cron tasks)
+	userMessage := &agent.UserMessage{
+		Channel: "cron",
+		ChatId:  chatId,
+		Content: task.Prompt(),
+		Created: time.Now().Unix(),
+	}
+
+	// execute the agent
+	result := g.agent.Ask(ctx, userMessage)
+	slog.Info("cron task executed", "name", task.Name)
+
+	// deliver result if configured
+	if !task.Deliver {
+		return
+	}
+
+	adapter, ok := g.adapters[task.DeliverChannel]
+	if !ok {
+		slog.Error("adapter not found for cron task delivery", "name", task.Name, "channel", task.DeliverChannel)
+		return
+	}
+
+	select {
+	case adapter.SendChan() <- &chmodel.OutgoingMessage{
+		ReceiverId: task.DeliverTo,
+		Channel:    task.DeliverChannel,
+		ChatId:     chatId,
+		Content:    result,
+	}:
+		slog.Info("cron task result delivered", "name", task.Name, "to", task.DeliverTo)
+	default:
+		slog.Warn("failed to deliver cron task result", "name", task.Name)
+	}
 }

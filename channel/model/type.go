@@ -8,3 +8,7 @@ const (
 	CLI  Type = "cli"
 	Lark Type = "lark" // feishu
 )
+
+func IsCronDeliveryChannel(t Type) bool {
+	return t == Lark
+}

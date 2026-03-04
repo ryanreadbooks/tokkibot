@@ -10,6 +10,7 @@ import (
 
 	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
+	"github.com/ryanreadbooks/tokkibot/workspace"
 
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
@@ -96,11 +97,12 @@ func NewAgent(
 
 // register tools
 func (a *Agent) registerTools() {
-	allowDirs := []string{config.GetProjectDir(), config.GetWorkspaceDir()}
-	a.RegisterTool(tools.ReadFile(allowDirs))
-	a.RegisterTool(tools.WriteFile(allowDirs))
-	a.RegisterTool(tools.ListDir(allowDirs))
-	a.RegisterTool(tools.EditFile(allowDirs))
+	workspaceReadDir := workspace.GetAllowedReadPaths()
+	workspaceWriteDir := workspace.GetAllowedWritePaths()
+	a.RegisterTool(tools.ReadFile(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
+	a.RegisterTool(tools.WriteFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
+	a.RegisterTool(tools.ListDir(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
+	a.RegisterTool(tools.EditFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
 	a.RegisterTool(tools.LoadRef())
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))

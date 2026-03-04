@@ -96,8 +96,18 @@ func (a *LarkAdapter) Start(ctx context.Context) error {
 				a.sendMessageReaction(ctx, messageId, emoji.DONE)
 			}
 
-			// send output message
-			a.replyInteractiveMessage(ctx, messageId, msg.Content)
+			if messageId != "" {
+				// send output message
+				a.replyInteractiveMessage(ctx, messageId, msg.Content)
+			} else {
+				if msg.ReceiverId != "" {
+					if strings.HasPrefix(msg.ReceiverId, "ou_") {
+						a.sendInteractiveMessageToUser(ctx, msg.ReceiverId, msg.Content)
+					} else {
+						a.sendInteractiveMessageToChat(ctx, msg.ReceiverId, msg.Content)
+					}
+				}
+			}
 
 			a.cancelMu.Lock()
 			if cancel := a.cancels[messageId]; cancel != nil {

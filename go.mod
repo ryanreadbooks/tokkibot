@@ -14,6 +14,7 @@ require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/openai/openai-go/v3 v3.18.0
 	github.com/panjf2000/ants/v2 v2.11.5
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )

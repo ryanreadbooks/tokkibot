@@ -13,12 +13,18 @@ import (
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
-func (a *LarkAdapter) sendMessage(ctx context.Context, userOpenId, msgType string, content string) {
+func (a *LarkAdapter) sendMessage(
+	ctx context.Context,
+	receiveIdType string,
+	receiveId string,
+	msgType string,
+	content string,
+) {
 	reqBuilder := imv1.NewCreateMessageReqBuilder()
-	reqBuilder.ReceiveIdType(imv1.ReceiveIdTypeOpenId).
+	reqBuilder.ReceiveIdType(receiveIdType).
 		Body(
 			imv1.NewCreateMessageReqBodyBuilder().
-				ReceiveId(userOpenId).
+				ReceiveId(receiveId).
 				MsgType(msgType).
 				Content(content).
 				Uuid(uuid.NewString()).
@@ -29,7 +35,7 @@ func (a *LarkAdapter) sendMessage(ctx context.Context, userOpenId, msgType strin
 
 	resp, err := a.cli.Im.Message.Create(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to send error log to lark", "error", err)
+		slog.ErrorContext(ctx, "failed to send to lark", "error", err)
 		return
 	}
 
@@ -39,19 +45,27 @@ func (a *LarkAdapter) sendMessage(ctx context.Context, userOpenId, msgType strin
 	}
 }
 
+func (a *LarkAdapter) sendMessageToUser(ctx context.Context, userOpenId, msgType string, content string) {
+	a.sendMessage(ctx, imv1.ReceiveIdTypeOpenId, userOpenId, msgType, content)
+}
+
+func (a *LarkAdapter) sendMessageToChat(ctx context.Context, chatId, msgType string, content string) {
+	a.sendMessage(ctx, imv1.ReceiveIdTypeChatId, chatId, msgType, content)
+}
+
 // Send error log to lark to display to user.
 func (a *LarkAdapter) sendErrorLog(ctx context.Context, userOpenId string, err error) {
 	if err == nil {
 		return
 	}
 
-	a.sendMessage(ctx, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, err.Error()))
+	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, err.Error()))
 }
 
 // Send card message to lark.
 // Content will be parsed and rendered as lark card elements.
 // Content is considered as markdown format
-func (a *LarkAdapter) sendInteractiveMessage(ctx context.Context, userOpenId string, content string) {
+func (a *LarkAdapter) sendInteractiveMessageToUser(ctx context.Context, userOpenId string, content string) {
 	cd := card.NewCardV2Builder().
 		AppendBodyElement(card.NewBodyMarkdownElement(content)).
 		Build()
@@ -62,7 +76,21 @@ func (a *LarkAdapter) sendInteractiveMessage(ctx context.Context, userOpenId str
 		return
 	}
 
-	a.sendMessage(ctx, userOpenId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+}
+
+func (a *LarkAdapter) sendInteractiveMessageToChat(ctx context.Context, chatId string, content string) {
+	cd := card.NewCardV2Builder().
+		AppendBodyElement(card.NewBodyMarkdownElement(content)).
+		Build()
+
+	cdJson, err := json.Marshal(cd)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		return
+	}
+
+	a.sendMessageToChat(ctx, chatId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
 func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgType string, content string) (string, error) {
