@@ -37,7 +37,9 @@ var systemPromptList = []string{
 
 // context management for the agent
 type ContextManager struct {
-	systemPrompts string
+	systemPromptsTemplate string // raw template, not rendered
+	systemPromptsCache    string // rendered cache for display
+	systemPromptsMu       sync.RWMutex
 
 	historyInjectOnce sync.Once
 	messageList       []param.Message
@@ -148,14 +150,15 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 		prompts.WriteString(memoryPrompt)
 	}
 
-	c.systemPrompts = prompts.String()
-	c.systemPrompts = c.renderPrompts(c.systemPrompts)
-	// the first one is system prompt
-	c.messageList = append(c.messageList,
-		param.NewSystemMessage(c.systemPrompts),
-	)
+	// store raw template, will be rendered on each GetMessageContext call
+	c.systemPromptsTemplate = prompts.String()
 
 	return nil
+}
+
+// getRenderedSystemPrompts returns the system prompts with dynamic values (like Now) freshly rendered
+func (c *ContextManager) getRenderedSystemPrompts() string {
+	return c.renderPrompts(c.systemPromptsTemplate)
 }
 
 func (c *ContextManager) InitFromSessionLogs(channel, chatId string) {
@@ -371,8 +374,8 @@ func (c *ContextManager) GetMessageContext(channel, chatId string) (
 	// +1 for system prompt
 	msgList := make([]param.Message, 0, len(logs)+1)
 
-	// System prompt always goes first
-	msgList = append(msgList, param.NewSystemMessage(c.systemPrompts))
+	// System prompt always goes first, freshly rendered with current time
+	msgList = append(msgList, param.NewSystemMessage(c.getRenderedSystemPrompts()))
 
 	for _, log := range logs {
 		msgList = append(msgList, *log.Message)
@@ -382,7 +385,7 @@ func (c *ContextManager) GetMessageContext(channel, chatId string) (
 }
 
 func (c *ContextManager) GetSystemPrompt() string {
-	return c.systemPrompts
+	return c.getRenderedSystemPrompts()
 }
 
 func (c *ContextManager) GetMessageHistory(channel, chatId string) (

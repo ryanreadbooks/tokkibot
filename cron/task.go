@@ -21,6 +21,7 @@ type Task struct {
 	Name      string     `json:"name"`
 	CronExpr  string     `json:"cron_expr"`
 	Enabled   bool       `json:"enabled"`
+	OneShot   bool       `json:"one_shot,omitempty"` // run once then disable
 	CreatedAt time.Time  `json:"created_at"`
 	LastRun   *time.Time `json:"last_run,omitempty"`
 
@@ -44,6 +45,13 @@ func WithDelivery(channel chmodel.Type, to string) TaskOption {
 		t.Deliver = true
 		t.DeliverChannel = channel
 		t.DeliverTo = to
+	}
+}
+
+// WithOneShot makes the task run only once then auto-disable
+func WithOneShot() TaskOption {
+	return func(t *Task) {
+		t.OneShot = true
 	}
 }
 

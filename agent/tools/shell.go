@@ -98,7 +98,7 @@ func Shell() tool.Invoker {
 			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided.",
 			pkgos.GetSystemDistro(),
 		),
-	}, func(ctx context.Context, input *ShellInput) (string, error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
 		// Check if command is completely blocked
 		if checkCommandBlocked(input.Command) {
 			return "", wrapShellError(errDangerousCommand, shellBlockedTag)

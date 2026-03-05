@@ -48,7 +48,7 @@ func ReadFile(allowDirs []string) tool.Invoker {
 		Description: "Read the contents of a file at the given path. Output always always include numbers " +
 			"in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content " +
 			"by specifying line offset and limit for large files. ",
-	}, func(ctx context.Context, input *ReadFileInput) (content string, err error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *ReadFileInput) (content string, err error) {
 		// now we can read the file
 		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
@@ -102,7 +102,7 @@ func WriteFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "write_file",
 		Description: "Write content to a file at the given path. Creates parent directories if necessary.",
-	}, func(ctx context.Context, input *WriteFileInput) (result string, err error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *WriteFileInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
@@ -131,7 +131,7 @@ func ListDir(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "list_dir",
 		Description: "List the contents of a directory.",
-	}, func(ctx context.Context, input *ListDirInput) (result string, err error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *ListDirInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
@@ -171,7 +171,7 @@ func EditFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "edit_file",
 		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
-	}, func(ctx context.Context, input *EditFileInput) (result string, err error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *EditFileInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.FileName, allowDirs)
 		if err != nil {
 			return "", err
@@ -221,7 +221,7 @@ func LoadRef() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "load_ref",
 		Description: "Load content from a previously stored reference (e.g., tool call results).",
-	}, func(ctx context.Context, input *LoadRefInput) (string, error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *LoadRefInput) (string, error) {
 		// refName example: @refs/xxx/xxx
 		fullpath, err := ref.Fullpath(input.Name)
 		if err != nil {

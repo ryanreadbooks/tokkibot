@@ -21,7 +21,7 @@ type Invoker interface {
 	// Invoke executes the tool with the given arguments and returns the result.
 	//
 	// The arguments is the JSON-encoded string of the arguments.
-	Invoke(ctx context.Context, arguments string) (string, error)
+	Invoke(ctx context.Context, meta InvokeMeta, arguments string) (string, error)
 }
 
 type InvokeResult struct {

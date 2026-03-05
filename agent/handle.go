@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
@@ -25,6 +26,11 @@ func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) erro
 func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage) string {
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
 		return err.Error()
+	}
+
+	toolMeta := tool.InvokeMeta{
+		Channel: userMsg.Channel,
+		ChatId:  userMsg.ChatId,
 	}
 
 	agentCfg := config.GetAgentConfig()
@@ -60,7 +66,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 			// IMPORTANT: must complete all tool calls to match assistant's tool_calls
 			// even if ctx is cancelled, we need to save all tool results
 			for _, tc := range choice.Message.ToolCalls {
-				if err := a.handleToolCall(ctx, userMsg, &tc); err != nil {
+				if err := a.handleToolCall(ctx, toolMeta, userMsg, &tc); err != nil {
 					return err.Error()
 				}
 			}
@@ -84,11 +90,11 @@ type toolCallAndResult struct {
 //
 // This method will be called when one tool call response is completed.
 // Tool call will be invoked from another goroutine.
-func (a *Agent) handleStreamingToolCall(dstTcs *[]*toolCallAndResult) schema.StreamToolCallHandler {
+func (a *Agent) handleStreamingToolCall(toolMeta tool.InvokeMeta, dstTcs *[]*toolCallAndResult) schema.StreamToolCallHandler {
 	dstTcsMu := sync.Mutex{}
 	return func(ctx context.Context, tc schema.StreamChoiceDeltaToolCall) {
 		// invoke tool
-		result := a.getToolAndInvoke(ctx, &schema.CompletionToolCall{
+		result := a.getToolAndInvoke(ctx, toolMeta, &schema.CompletionToolCall{
 			Id:       tc.Id,
 			Type:     tc.Type,
 			Function: tc.Function,
@@ -116,7 +122,10 @@ func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMe
 	}
 
 	agentCfg := config.GetAgentConfig()
-
+	toolMeta := tool.InvokeMeta{
+		Channel: userMsg.Channel,
+		ChatId:  userMsg.ChatId,
+	}
 mainLoop:
 	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
 		select {
@@ -143,7 +152,7 @@ mainLoop:
 		streamPacked := schema.StreamResponseHandler(
 			ctx,
 			llmRespCh,
-			a.handleStreamingToolCall(&dstTcs),
+			a.handleStreamingToolCall(toolMeta, &dstTcs),
 		)
 
 		wg.Go(func() {
@@ -222,16 +231,17 @@ mainLoop:
 
 func (a *Agent) handleToolCall(
 	ctx context.Context,
+	toolMeta tool.InvokeMeta,
 	inMsg *UserMessage,
 	tc *schema.CompletionToolCall,
 ) error {
-	toolResult := a.getToolAndInvoke(ctx, tc)
+	toolResult := a.getToolAndInvoke(ctx, toolMeta, tc)
 	// feedback tool calling result to llm
 	err := a.contextMgr.AppendToolResult(inMsg, tc, toolResult)
 	return err
 }
 
-func (a *Agent) getToolAndInvoke(ctx context.Context, tc *schema.CompletionToolCall) string {
+func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, tc *schema.CompletionToolCall) string {
 	select {
 	case <-ctx.Done():
 		return formatCancelledError(ctx)
@@ -248,7 +258,7 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, tc *schema.CompletionToolC
 	a.toolsMu.RUnlock()
 
 	// execute tool
-	toolResult, err := tool.Invoke(ctx, tc.Function.Arguments)
+	toolResult, err := tool.Invoke(ctx, toolMeta, tc.Function.Arguments)
 	if err != nil {
 		toolResult = err.Error()
 	}

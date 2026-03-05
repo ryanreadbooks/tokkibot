@@ -14,6 +14,25 @@ import (
 	"github.com/ryanreadbooks/tokkibot/cron"
 )
 
+type gatewayOption struct {
+	runCronTasks bool
+	verbose      bool
+}
+
+type GatewayOption func(*gatewayOption)
+
+func WithRunCronTasks(run bool) GatewayOption {
+	return func(o *gatewayOption) {
+		o.runCronTasks = run
+	}
+}
+
+func WithVerbose(verbose bool) GatewayOption {
+	return func(o *gatewayOption) {
+		o.verbose = verbose
+	}
+}
+
 type Gateway struct {
 	agent    *agent.Agent
 	wg       sync.WaitGroup
@@ -29,12 +48,18 @@ type Gateway struct {
 	cronMgr *cron.Manager
 
 	verbose bool
+	option  *gatewayOption
 }
 
-func NewGateway(ctx context.Context) (*Gateway, error) {
+func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	ag, err := agent.Prepare(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare agent: %w", err)
+	}
+
+	option := &gatewayOption{}
+	for _, opt := range opts {
+		opt(option)
 	}
 
 	pools := make(map[string]*ants.Pool)
@@ -43,7 +68,9 @@ func NewGateway(ctx context.Context) (*Gateway, error) {
 		pools:    pools,
 		adapters: make(map[chmodel.Type]chadapter.Adapter),
 		running:  make(map[string]context.CancelFunc),
-		cronMgr:  cron.NewManager(),
+		cronMgr:  cron.GetGlobalManager(),
+		verbose:  option.verbose,
+		option:   option,
 	}
 
 	// set cron task handler
@@ -57,10 +84,6 @@ func NewGateway(ctx context.Context) (*Gateway, error) {
 	return gateway, nil
 }
 
-func (g *Gateway) SetVerbose(verbose bool) {
-	g.verbose = verbose
-}
-
 func (g *Gateway) GetAgent() *agent.Agent {
 	return g.agent
 }
@@ -69,20 +92,13 @@ func (g *Gateway) AddAdapter(adapter chadapter.Adapter) {
 	g.adapters[adapter.Type()] = adapter
 }
 
-func StartGateway(ctx context.Context) error {
-	gateway, err := NewGateway(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to init gateway: %w", err)
-	}
-
-	return gateway.Run(ctx)
-}
-
 func (g *Gateway) Run(ctx context.Context) error {
 	// schedule and start cron tasks
-	g.cronMgr.ScheduleAll()
-	g.cronMgr.Start()
-	defer g.cronMgr.Stop()
+	g.cronMgr.RegisterAll()
+	if g.option.runCronTasks {
+		g.cronMgr.Start()
+		defer g.cronMgr.Stop()
+	}
 
 	for _, adapter := range g.adapters {
 		if g.verbose {

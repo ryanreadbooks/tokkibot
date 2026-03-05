@@ -41,7 +41,7 @@ func UseSkill(loader *skill.Loader) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "use_skill",
 		Description: "Use skill with the given name using action and args",
-	}, func(ctx context.Context, input *UseSkillInput) (string, error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *UseSkillInput) (string, error) {
 		s, err := loader.Get(input.Name)
 		if err != nil {
 			return "", err

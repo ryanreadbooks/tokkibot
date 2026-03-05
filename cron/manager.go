@@ -13,6 +13,20 @@ import (
 	"github.com/ryanreadbooks/tokkibot/config"
 )
 
+// global manager instance
+var (
+	globalManager *Manager
+	once          sync.Once
+)
+
+// GetGlobalManager returns the global cron manager
+func GetGlobalManager() *Manager {
+	once.Do(func() {
+		globalManager = NewManager()
+	})
+	return globalManager
+}
+
 // TaskHandler is called when a cron task is triggered
 type TaskHandler func(ctx context.Context, task *Task)
 
@@ -78,8 +92,8 @@ func (m *Manager) Load() error {
 	return nil
 }
 
-// ScheduleAll registers all enabled tasks with the cron scheduler
-func (m *Manager) ScheduleAll() {
+// RegisterAll registers all enabled tasks with the cron scheduler
+func (m *Manager) RegisterAll() {
 	// collect tasks first to avoid lock contention
 	m.mu.RLock()
 	tasksToSchedule := make([]*Task, 0)
@@ -151,7 +165,7 @@ func (m *Manager) executeTask(task *Task) {
 	}
 	defer task.mu.Unlock()
 
-	slog.Info("executing cron task", "name", task.Name)
+	slog.Info("executing cron task", "name", task.Name, "one_shot", task.OneShot)
 
 	// update last run time
 	now := time.Now()
@@ -164,9 +178,20 @@ func (m *Manager) executeTask(task *Task) {
 		ctx := context.Background()
 		m.handler(ctx, task)
 	}
+
+	// auto-disable one-shot tasks after execution
+	if task.OneShot {
+		slog.Info("disabling one-shot task after execution", "name", task.Name)
+		task.Enabled = false
+		m.unscheduleTask(task.Name)
+		if err := task.UpdateMeta(m.cronsDir); err != nil {
+			slog.Error("failed to disable one-shot task", "name", task.Name, "error", err)
+		}
+	}
 }
 
 // AddOrUpdateTask adds a new cron task or updates an existing one
+// If the scheduler is running, the task will be scheduled immediately
 func (m *Manager) AddOrUpdateTask(task *Task) (updated bool, err error) {
 	// validate cron expression
 	if _, err := cron.ParseStandard(task.CronExpr); err != nil {
@@ -177,6 +202,11 @@ func (m *Manager) AddOrUpdateTask(task *Task) (updated bool, err error) {
 	_, updated = m.tasks[task.Name]
 	m.mu.Unlock()
 
+	// if updating, unschedule the old task first
+	if updated {
+		m.unscheduleTask(task.Name)
+	}
+
 	// save to disk
 	if err := task.Save(m.cronsDir); err != nil {
 		return updated, err
@@ -185,6 +215,13 @@ func (m *Manager) AddOrUpdateTask(task *Task) (updated bool, err error) {
 	m.mu.Lock()
 	m.tasks[task.Name] = task
 	m.mu.Unlock()
+
+	// schedule immediately if task is enabled
+	if task.Enabled {
+		if err := m.scheduleTask(task); err != nil {
+			slog.Warn("failed to schedule task immediately", "name", task.Name, "error", err)
+		}
+	}
 
 	return updated, nil
 }

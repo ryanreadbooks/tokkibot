@@ -34,8 +34,8 @@ var listCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tEXPR\tENABLED\tDELIVER\tLAST RUN\tNEXT RUN")
-		fmt.Fprintln(w, "----\t----\t-------\t-------\t--------\t--------")
+		fmt.Fprintln(w, "NAME\tEXPR\tENABLED\tONCE\tDELIVER\tLAST RUN\tNEXT RUN")
+		fmt.Fprintln(w, "----\t----\t-------\t----\t-------\t--------\t--------")
 
 		for _, task := range tasks {
 			lastRun := "-"
@@ -53,8 +53,8 @@ var listCmd = &cobra.Command{
 				deliver = fmt.Sprintf("%s:%s", task.DeliverChannel, task.DeliverTo)
 			}
 
-			fmt.Fprintf(w, "%s\t%s\t%v\t%s\t%s\t%s\n",
-				task.Name, task.CronExpr, task.Enabled, deliver, lastRun, nextRun)
+			fmt.Fprintf(w, "%s\t%s\t%v\t%v\t%s\t%s\t%s\n",
+				task.Name, task.CronExpr, task.Enabled, task.OneShot, deliver, lastRun, nextRun)
 		}
 		w.Flush()
 		return nil
@@ -65,6 +65,7 @@ var (
 	addName    string
 	addExpr    string
 	addPrompt  string
+	addOnce    bool
 	addDeliver bool
 	addChannel string
 	addTo      string
@@ -83,6 +84,9 @@ var addCmd = &cobra.Command{
 		}
 
 		var opts []cron.TaskOption
+		if addOnce {
+			opts = append(opts, cron.WithOneShot())
+		}
 		if addDeliver {
 			channelType := model.Type(addChannel)
 			if !model.IsCronDeliveryChannel(channelType) {
@@ -109,7 +113,10 @@ var addCmd = &cobra.Command{
 		}
 		fmt.Printf("Cron task '%s' %s successfully.\n", addName, action)
 		fmt.Printf("  Directory: %s/%s\n", mgr.CronsDir(), addName)
-		fmt.Printf("  Chat ID: cron:%s\n", addName)
+		fmt.Printf("  Session ID: cron:%s\n", addName)
+		if addOnce {
+			fmt.Println("  One-shot: yes (will auto-disable after first run)")
+		}
 		if addDeliver {
 			fmt.Printf("  Deliver to: %s (%s)\n", addTo, addChannel)
 		}
@@ -229,6 +236,7 @@ func init() {
 	addCmd.Flags().StringVar(&addName, "name", "", "Task name")
 	addCmd.Flags().StringVar(&addExpr, "expr", "", "Cron expression (e.g., '0 9 * * *' for daily at 9am)")
 	addCmd.Flags().StringVar(&addPrompt, "prompt", "", "Prompt to send when triggered")
+	addCmd.Flags().BoolVar(&addOnce, "once", false, "Run only once then auto-disable")
 	addCmd.Flags().BoolVar(&addDeliver, "deliver", false, "Enable delivery after task completion")
 	addCmd.Flags().StringVar(&addChannel, "channel", "", "Delivery channel type (lark)")
 	addCmd.Flags().StringVar(&addTo, "to", "", "Delivery target (e.g., chat_id for lark)")

@@ -20,8 +20,10 @@ var GatewayCmd = &cobra.Command{
 }
 
 func initGateway(ctx context.Context) error {
-	g, err := gw.NewGateway(ctx)
-	g.SetVerbose(true)
+	g, err := gw.NewGateway(ctx,
+		gw.WithVerbose(true),
+		gw.WithRunCronTasks(true),
+	)
 	if err != nil {
 		return err
 	}

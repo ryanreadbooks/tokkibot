@@ -8,7 +8,12 @@ import (
 	"github.com/ryanreadbooks/tokkibot/pkg/schema"
 )
 
-type InvokerFunc[T, O any] func(ctx context.Context, input T) (O, error)
+type InvokeMeta struct {
+	Channel string
+	ChatId  string
+}
+
+type InvokerFunc[T, O any] func(ctx context.Context, meta InvokeMeta, input T) (O, error)
 
 type invoker[T, O any] struct {
 	info Info
@@ -22,7 +27,7 @@ func (t *invoker[T, O]) Info() Info {
 	return t.info
 }
 
-func (t *invoker[T, O]) Invoke(ctx context.Context, arguments string) (string, error) {
+func (t *invoker[T, O]) Invoke(ctx context.Context, meta InvokeMeta, arguments string) (string, error) {
 	var (
 		input T
 		err   error
@@ -51,7 +56,7 @@ func (t *invoker[T, O]) Invoke(ctx context.Context, arguments string) (string, e
 
 	invr := &InvokeResult{Success: true}
 	// invoke the function
-	output, errOutput := t.fn(ctx, input)
+	output, errOutput := t.fn(ctx, meta, input)
 	if errOutput != nil {
 		invr.Success = false
 		invr.Err = fmt.Errorf("tool %s invoke err: %w", t.info.Name, errOutput).Error()

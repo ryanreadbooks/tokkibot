@@ -107,6 +107,9 @@ func (a *Agent) registerTools() {
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))
 	a.RegisterTool(tools.WebFetch())
+	a.RegisterTool(tools.ScheduleCron())
+	a.RegisterTool(tools.ListCron())
+	a.RegisterTool(tools.DeleteCron())
 }
 
 func (a *Agent) RegisterTool(tool tool.Invoker) {

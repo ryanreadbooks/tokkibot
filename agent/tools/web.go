@@ -107,7 +107,7 @@ func WebFetch() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        "web_fetch",
 		Description: "Fetch URL and extract HTML content to markdown or text",
-	}, func(ctx context.Context, input *WebFetchInput) (*WebFetchOutput, error) {
+	}, func(ctx context.Context, meta tool.InvokeMeta, input *WebFetchInput) (*WebFetchOutput, error) {
 		// Validate URL scheme
 		if !strings.HasPrefix(input.URL, "http://") && !strings.HasPrefix(input.URL, "https://") {
 			return nil, errors.New("invalid URL scheme, only http:// and https:// are supported")

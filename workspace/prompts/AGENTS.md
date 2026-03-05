@@ -81,7 +81,7 @@ Also save:
 
 ### Memory Format
 
-Use clear sections with headers:
+Use clear sections with headers, examples below:
 
 ```markdown
 ## User Preferences
