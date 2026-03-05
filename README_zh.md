@@ -138,4 +138,4 @@ tokkibot cron delete daily-report
 
 ## License
 
-MIT
+[Apache 2.0](LICENSE)

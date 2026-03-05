@@ -138,4 +138,4 @@ Default workspace is located at `~/.tokkibot/`:
 
 ## License
 
-MIT
+[Apache 2.0](LICENSE)
