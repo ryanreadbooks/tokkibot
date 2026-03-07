@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 )
@@ -39,8 +40,8 @@ type UseSkillInput struct {
 // Skill-using tool.
 func UseSkill(loader *skill.Loader) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "use_skill",
-		Description: "Use skill with the given name using action and args",
+		Name:        ToolNameUseSkill,
+		Description: description.UseSkillDescription,
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *UseSkillInput) (string, error) {
 		s, err := loader.Get(input.Name)
 		if err != nil {

@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0

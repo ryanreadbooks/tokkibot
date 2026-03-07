@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/ryanreadbooks/tokkibot/agent/tools"
 )
 
 // ToolCallInfo represents parsed tool call information for display
@@ -40,17 +42,17 @@ func FormatToolCallArgs(name string, argsJSON string, maxLen int) string {
 
 	// Format based on tool type
 	switch name {
-	case "read_file":
+	case tools.ToolNameReadFile:
 		return formatReadFileArgs(args)
-	case "write_file":
+	case tools.ToolNameWriteFile:
 		return formatWriteFileArgs(args)
-	case "edit_file":
+	case tools.ToolNameEditFile:
 		return formatEditFileArgs(args)
-	case "list_dir":
+	case tools.ToolNameListDir:
 		return formatListDirArgs(args)
-	case "shell":
+	case tools.ToolNameShell:
 		return formatShellArgs(args)
-	case "todo_write":
+	case tools.ToolNameTodoWrite:
 		return formatTodoWriteArgs(args)
 	default:
 		return formatGenericArgs(args, maxLen)

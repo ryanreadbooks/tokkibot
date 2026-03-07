@@ -128,7 +128,7 @@ func doTodoWriteInvoke(ctx context.Context, meta tool.InvokeMeta, input *TodoWri
 
 func TodoWrite() tool.Invoker {
 	info := tool.Info{
-		Name:        "todo_write",
+		Name:        ToolNameTodoWrite,
 		Description: description.TodoWriteDescription,
 	}
 

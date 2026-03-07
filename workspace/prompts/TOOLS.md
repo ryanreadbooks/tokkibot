@@ -9,6 +9,7 @@ All tools return: `{"success": bool, "data": "...", "err": "..."}`. Always check
 **File Operations:**
 - Use `edit_file` for modifications (safer than `write_file` which overwrites entirely)
 - Include enough context in `old_string` to ensure uniqueness
+- Use `glob` over `shell` file pattern matching
 
 **Shell:**
 - Use dedicated tools instead: `read_file` not `cat`, `list_dir` not `ls`
@@ -19,18 +20,3 @@ All tools return: `{"success": bool, "data": "...", "err": "..."}`. Always check
 - Tasks auto-deliver results to current chat
 - `one_shot=true` for one-time tasks that auto-disable after execution
 - Expression format: `min hour day month weekday` (e.g., `0 9 * * *` = daily 9am)
-
-## Quick Reference
-
-| Task | Tool |
-|------|------|
-| Read file | `read_file` |
-| Modify file | `edit_file` |
-| Create file | `write_file` |
-| List directory | `list_dir` |
-| Run command | `shell` |
-| Fetch URL | `web_fetch` |
-| Schedule task | `schedule_cron` / `list_cron` / `delete_cron` |
-| Load reference | `load_ref` |
-| Use skill | `use_skill` |
-| Todo/Task| `todo_write` |

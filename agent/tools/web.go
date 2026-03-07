@@ -105,7 +105,7 @@ func newWebFetchBinaryOutput(data []byte, contentType string, statusCode int) *W
 
 func WebFetch() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "web_fetch",
+		Name:        ToolNameWebFetch,
 		Description: "Fetch URL and extract HTML content to markdown or text",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *WebFetchInput) (*WebFetchOutput, error) {
 		// Validate URL scheme

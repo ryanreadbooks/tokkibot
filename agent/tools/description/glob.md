@@ -1,0 +1,4 @@
+- Fast file pattern matching for any codebase size.
+- Patterns: `**/*.js`, `src/**/*.ts`, `**/test_*.go`
+- Best for: Finding files by name/extension. For complex multi-step searches, use the Agent tool.
+- Tip: Batch multiple glob calls in one response for better efficiency.

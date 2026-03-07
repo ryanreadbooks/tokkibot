@@ -1,0 +1,5 @@
+- Execute a shell command in %s. Uses current working directory if not specified.
+- Output tags indicate execution status:
+  - `<shell_blocked>`: Command was blocked
+  - `<shell_run_error>`: Runtime error occurred
+  - `<shell_confirm_needed>`: Awaiting user confirmation (timed out or rejected)

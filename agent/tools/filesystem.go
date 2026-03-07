@@ -44,7 +44,7 @@ type ReadFileInput struct {
 // We restrict the directory to read from to avoid security issues.
 func ReadFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name: "read_file",
+		Name: ToolNameReadFile,
 		Description: "Read the contents of a file at the given path. Output always always include numbers " +
 			"in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content " +
 			"by specifying line offset and limit for large files. ",
@@ -100,7 +100,7 @@ type WriteFileInput struct {
 // WriteFile tool to write content to a file at the given path.
 func WriteFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "write_file",
+		Name:        ToolNameWriteFile,
 		Description: "Write content to a file at the given path. Creates parent directories if necessary.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *WriteFileInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.Path, allowDirs)
@@ -129,7 +129,7 @@ type ListDirInput struct {
 
 func ListDir(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "list_dir",
+		Name:        ToolNameListDir,
 		Description: "List the contents of a directory.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *ListDirInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.Path, allowDirs)
@@ -150,9 +150,9 @@ func ListDir(allowDirs []string) tool.Invoker {
 		ss.Grow(len(entries) * 16)
 		for _, entry := range entries {
 			if entry.IsDir() {
-				ss.WriteString(fmt.Sprintf("📁%s", entry.Name()))
+				fmt.Fprintf(&ss, "%s/\n", entry.Name())
 			} else {
-				ss.WriteString(fmt.Sprintf("📄%s", entry.Name()))
+				fmt.Fprintf(&ss, "%s\n", entry.Name())
 			}
 		}
 
@@ -169,7 +169,7 @@ type EditFileInput struct {
 
 func EditFile(allowDirs []string) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "edit_file",
+		Name:        ToolNameEditFile,
 		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *EditFileInput) (result string, err error) {
 		cleanPath, err := resolvePath(input.FileName, allowDirs)
@@ -219,7 +219,7 @@ type LoadRefInput struct {
 // Load ref, similar to read file, but for better understanding this is tool is seperated.
 func LoadRef() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "load_ref",
+		Name:        ToolNameLoadRef,
 		Description: "Load content from a previously stored reference (e.g., tool call results).",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *LoadRefInput) (string, error) {
 		// refName example: @refs/xxx/xxx

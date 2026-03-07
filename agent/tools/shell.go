@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/pkg/bash"
 	pkgos "github.com/ryanreadbooks/tokkibot/pkg/os"
@@ -117,7 +118,7 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 		resp, err := confirmer.RequestConfirm(ctx, &tool.ConfirmRequest{
 			Channel:     meta.Channel,
 			ChatId:      meta.ChatId,
-			ToolName:    "shell",
+			ToolName:    ToolNameShell,
 			Level:       tool.ConfirmNormal,
 			Title:       "Confirm Command Execution",
 			Description: "This command may modify system state. Please confirm to proceed.",
@@ -142,11 +143,8 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 // Tool to execute a command under the optional given working directory.
 func Shell() tool.Invoker {
 	info := tool.Info{
-		Name: "shell",
-		Description: fmt.Sprintf(
-			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided.",
-			pkgos.GetSystemDistro(),
-		),
+		Name:        ToolNameShell,
+		Description: fmt.Sprintf(description.ShellDescription, pkgos.GetSystemDistro()),
 	}
 
 	return tool.NewInvoker(info, doShellInvoke, tool.WithBeforeInvoke(beforeDoShellInvoke))

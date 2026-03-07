@@ -44,15 +44,6 @@ Follow this protocol for every task:
 - Continue after a tool error without addressing it
 - Make up file contents or tool outputs
 
-## Available Tools
-
-| Category | Tools |
-|----------|-------|
-| File | `read_file`, `write_file`, `list_dir`, `edit_file`, `load_ref` |
-| Shell | `shell` |
-| Skills | `use_skill` |
-| Web | `web_fetch` |
-
 ## Memory
 
 Memory file: `{{.Workspace}}/memory/LONG-TERM.md`

@@ -8,9 +8,11 @@ import (
 )
 
 var (
+	// tokkibot workspace directory, usually $HOME/.tokkibot
 	workspaceDir     string
 	workspaceDirOnce sync.Once
 
+	// current working directory
 	projectDir     string
 	projectDirOnce sync.Once
 )
@@ -27,6 +29,7 @@ func MustInit() {
 
 const configFileName = "config.yaml"
 
+// tokkibot workspace directory, usually $HOME/.tokkibot
 func GetWorkspaceDir() string {
 	workspaceDirOnce.Do(func() {
 		home, err := os.UserHomeDir()
@@ -39,6 +42,7 @@ func GetWorkspaceDir() string {
 	return workspaceDir
 }
 
+// current working directory, usually the project directory
 func GetProjectDir() string {
 	projectDirOnce.Do(func() {
 		cwd, err := os.Getwd()

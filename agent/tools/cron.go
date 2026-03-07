@@ -18,7 +18,7 @@ type ScheduleCronInput struct {
 
 func ScheduleCron() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name: "schedule_cron",
+		Name: ToolNameScheduleCron,
 		Description: "Schedule a cron task that runs periodically or once at a specified time. " +
 			"Results will be delivered to the current chat. " +
 			"Use one_shot=true for one-time scheduled tasks that auto-disable after execution.",
@@ -74,7 +74,7 @@ type ListCronInput struct{}
 
 func ListCron() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "list_cron",
+		Name:        ToolNameListCron,
 		Description: "List all scheduled cron tasks with their status, expression, and next run time.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *ListCronInput) (string, error) {
 		mgr := cron.GetGlobalManager()
@@ -116,7 +116,7 @@ type DeleteCronInput struct {
 
 func DeleteCron() tool.Invoker {
 	return tool.NewInvoker(tool.Info{
-		Name:        "delete_cron",
+		Name:        ToolNameDeleteCron,
 		Description: "Delete a scheduled cron task by name.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *DeleteCronInput) (string, error) {
 		if input.Name == "" {
