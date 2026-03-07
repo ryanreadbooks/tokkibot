@@ -16,6 +16,7 @@ type InvokeMeta struct {
 type InvokerFunc[T, O any] func(ctx context.Context, meta InvokeMeta, input T) (O, error)
 
 type invoker[T, O any] struct {
+	opt  *invokerOption[T]
 	info Info
 	fn   InvokerFunc[T, O]
 
@@ -55,6 +56,15 @@ func (t *invoker[T, O]) Invoke(ctx context.Context, meta InvokeMeta, arguments s
 	}
 
 	invr := &InvokeResult{Success: true}
+
+	// before invoke hook (e.g., for confirmation)
+	if t.opt.beforeInvoke != nil {
+		err = t.opt.beforeInvoke(ctx, meta, input)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	// invoke the function
 	output, errOutput := t.fn(ctx, meta, input)
 	if errOutput != nil {
@@ -74,15 +84,39 @@ func (t *invoker[T, O]) Invoke(ctx context.Context, meta InvokeMeta, arguments s
 	return invr.Json(), nil
 }
 
+type invokerOption[T any] struct {
+	beforeInvoke BeforeInvokeFunc[T]
+}
+
+type InvokerOption[T any] func(o *invokerOption[T])
+
+func WithBeforeInvoke[T any](before BeforeInvokeFunc[T]) InvokerOption[T] {
+	return func(o *invokerOption[T]) {
+		o.beforeInvoke = before
+	}
+}
+
 // Heler function to create an InvokableTool from a function.
-func NewInvoker[T, O any](info Info, fn InvokerFunc[T, O]) Invoker {
+func NewInvoker[T, O any](info Info,
+	invoke InvokerFunc[T, O],
+	opts ...InvokerOption[T],
+) Invoker {
 	if info.Schema == nil {
 		sch := schema.Get[T]()
 		info.Schema = &sch
 	}
 
+	opt := &invokerOption[T]{}
+	for _, o := range opts {
+		o(opt)
+	}
+
 	return &invoker[T, O]{
 		info: info,
-		fn:   fn,
+		fn:   invoke,
+		opt:  opt,
 	}
 }
+
+// BeforeInvokeFunc is called before tool execution, can be used for confirmation via tool.GetConfirmer(ctx)
+type BeforeInvokeFunc[T any] func(ctx context.Context, meta InvokeMeta, input T) error

@@ -11,6 +11,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent"
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/cron"
 )
 
@@ -189,6 +190,10 @@ func (g *Gateway) workerDo(
 	userMessage *agent.UserMessage,
 	adapter chadapter.Adapter,
 ) {
+	// Inject ToolConfirmer into context
+	confirmHandler := NewConfirmHandler(rawMsg)
+	ctx = tool.WithConfirmer(ctx, confirmHandler)
+
 	result := g.agent.Ask(ctx, userMessage)
 
 	// send result back to adapter
@@ -210,6 +215,10 @@ func (g *Gateway) workerDoStream(
 	userMessage *agent.UserMessage,
 	_ chadapter.Adapter,
 ) {
+	// Inject ToolConfirmer into context
+	confirmHandler := NewConfirmHandler(rawMsg)
+	ctx = tool.WithConfirmer(ctx, confirmHandler)
+
 	emitter := &msgEmitter{msg: rawMsg}
 	g.agent.AskStream(ctx, userMessage, emitter)
 }

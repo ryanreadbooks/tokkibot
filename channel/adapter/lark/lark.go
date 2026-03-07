@@ -32,6 +32,9 @@ type LarkAdapter struct {
 
 	cancelMu sync.Mutex
 	cancels  map[string]context.CancelFunc
+
+	pendingConfirmEvtsMu sync.Mutex
+	pendingConfirmEvts   map[string]*model.ConfirmEvent
 }
 
 type LarkConfig struct {
@@ -59,10 +62,11 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 		wscli: wscli,
 		cli:   cli,
 
-		input:    make(chan *model.IncomingMessage, 1),
-		output:   make(chan *model.OutgoingMessage, 16),
-		cancels:  make(map[string]context.CancelFunc),
-		cancelMu: sync.Mutex{},
+		input:   make(chan *model.IncomingMessage, 1),
+		output:  make(chan *model.OutgoingMessage, 16),
+		cancels: make(map[string]context.CancelFunc),
+
+		pendingConfirmEvts: make(map[string]*model.ConfirmEvent),
 	}
 	eventDispatcher.OnP2MessageReceiveV1(adapter.onMessageReceive)
 
@@ -128,7 +132,7 @@ func derefStr(p *string) string {
 
 func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2MessageReceiveV1) error {
 	if event.Event == nil || event.Event.Sender == nil || event.Event.Message == nil {
-		slog.ErrorContext(ctx, "invalid message event", "event", event)
+		slog.WarnContext(ctx, "invalid message event", "event", event)
 		return nil
 	}
 
@@ -150,7 +154,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 
 	// validate required fields
 	if senderId == "" || messageId == "" {
-		slog.ErrorContext(ctx, "missing required message fields", "sender_id", senderId, "message_id", messageId)
+		slog.WarnContext(ctx, "missing required message fields", "sender_id", senderId, "message_id", messageId)
 		return nil
 	}
 
@@ -268,6 +272,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		Attachments: attachments,
 		Metadata: map[string]any{
 			metaKeyMessageId:  messageId,
+			metaKeySenderId:   senderId,
 			metaKeyReactionId: reactionId,
 		},
 		SourceCtx: sourceCtx,
@@ -286,6 +291,7 @@ const (
 	streamFlushThreshold = 256 // flush when accumulated content exceeds this
 
 	metaKeyMessageId  = "message_id"
+	metaKeySenderId   = "sender_id"
 	metaKeyReactionId = "reaction_id"
 )
 

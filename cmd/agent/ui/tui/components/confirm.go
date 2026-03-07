@@ -4,14 +4,15 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui/styles"
 )
 
 // ConfirmDialog displays a confirmation dialog
 type ConfirmDialog struct {
 	theme   *styles.Theme
-	message string
-	respCh  chan bool
+	request *model.ConfirmRequest
+	respCh  chan<- *model.ConfirmResponse
 	visible bool
 	width   int
 }
@@ -37,7 +38,7 @@ func (c *ConfirmDialog) Update(msg tea.Msg) tea.Cmd {
 
 // View renders the component
 func (c *ConfirmDialog) View() string {
-	if !c.visible {
+	if !c.visible || c.request == nil {
 		return ""
 	}
 
@@ -46,15 +47,30 @@ func (c *ConfirmDialog) View() string {
 		boxWidth = 40
 	}
 
-	confirmText := fmt.Sprintf("⚠️  Dangerous Command Detected\n\n%s\n\n[Enter] Accept  [Esc] Reject  [Ctrl+C] Cancel",
-		c.message)
+	title := c.request.Title
+	if title == "" {
+		title = "Confirm Action"
+	}
+
+	description := c.request.Description
+	if description == "" {
+		description = "This action requires your confirmation"
+	}
+
+	command := c.request.Command
+	if command == "" {
+		command = c.request.ToolName
+	}
+
+	confirmText := fmt.Sprintf("⚠️  %s\n\n%s\n\n> %s\n\n[Enter] Accept  [Esc] Reject  [Ctrl+C] Cancel",
+		title, description, command)
 
 	return c.theme.Confirm.BoxStyle.Width(boxWidth).Render(confirmText)
 }
 
 // Show displays the confirmation dialog
-func (c *ConfirmDialog) Show(message string, respCh chan bool) {
-	c.message = message
+func (c *ConfirmDialog) Show(request *model.ConfirmRequest, respCh chan<- *model.ConfirmResponse) {
+	c.request = request
 	c.respCh = respCh
 	c.visible = true
 }
@@ -62,7 +78,7 @@ func (c *ConfirmDialog) Show(message string, respCh chan bool) {
 // Hide hides the confirmation dialog
 func (c *ConfirmDialog) Hide() {
 	c.visible = false
-	c.message = ""
+	c.request = nil
 	c.respCh = nil
 }
 
@@ -74,8 +90,7 @@ func (c *ConfirmDialog) IsVisible() bool {
 // Accept confirms the action
 func (c *ConfirmDialog) Accept() {
 	if c.respCh != nil {
-		c.respCh <- true
-		close(c.respCh)
+		c.respCh <- &model.ConfirmResponse{Confirmed: true}
 	}
 	c.Hide()
 }
@@ -83,8 +98,7 @@ func (c *ConfirmDialog) Accept() {
 // Reject rejects the action
 func (c *ConfirmDialog) Reject() {
 	if c.respCh != nil {
-		c.respCh <- false
-		close(c.respCh)
+		c.respCh <- &model.ConfirmResponse{Confirmed: false, Reason: "user rejected"}
 	}
 	c.Hide()
 }
@@ -92,9 +106,4 @@ func (c *ConfirmDialog) Reject() {
 // SetWidth sets the dialog width
 func (c *ConfirmDialog) SetWidth(width int) {
 	c.width = width
-}
-
-// GetResponseChannel returns the response channel
-func (c *ConfirmDialog) GetResponseChannel() chan bool {
-	return c.respCh
 }

@@ -59,11 +59,13 @@ func (a *CLIAdapter) Start(ctx context.Context) error {
 type SendMessageResult struct {
 	Content  <-chan *model.StreamContent
 	ToolCall <-chan *model.StreamTool
+	Confirm  <-chan *model.ConfirmEvent
 }
 
 func (a *CLIAdapter) SendUserMessage(ctx context.Context, content string) *SendMessageResult {
 	contentCh := make(chan *model.StreamContent, 16)
 	toolCh := make(chan *model.StreamTool, 16)
+	confirmCh := make(chan *model.ConfirmEvent, 1)
 
 	msg := &model.IncomingMessage{
 		Channel:   model.CLI,
@@ -87,9 +89,16 @@ func (a *CLIAdapter) SendUserMessage(ctx context.Context, content string) *SendM
 			case <-ctx.Done():
 			}
 		},
+		OnConfirmWaiting: func(e *model.ConfirmEvent) {
+			select {
+			case confirmCh <- e:
+			case <-ctx.Done():
+			}
+		},
 		OnDone: func() {
 			close(contentCh)
 			close(toolCh)
+			close(confirmCh)
 		},
 	}
 
@@ -98,10 +107,12 @@ func (a *CLIAdapter) SendUserMessage(ctx context.Context, content string) *SendM
 	case <-ctx.Done():
 		close(contentCh)
 		close(toolCh)
+		close(confirmCh)
 	}
 
 	return &SendMessageResult{
 		Content:  contentCh,
 		ToolCall: toolCh,
+		Confirm:  confirmCh,
 	}
 }

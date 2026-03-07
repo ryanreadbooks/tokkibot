@@ -20,9 +20,9 @@ const (
 type shellResultTag string
 
 const (
-	shellBlockedTag        shellResultTag = "<shell_blocked>"
-	shellRunErrTag         shellResultTag = "<shell_run_error>"
-	shellConfirmNeededTag  shellResultTag = "<shell_confirm_needed>"
+	shellBlockedTag       shellResultTag = "<shell_blocked>"
+	shellRunErrTag        shellResultTag = "<shell_run_error>"
+	shellConfirmNeededTag shellResultTag = "<shell_confirm_needed>"
 )
 
 var (
@@ -69,86 +69,85 @@ func (e *ConfirmationRequiredError) Error() string {
 	return fmt.Sprintf("Command '%s' requires user confirmation. Please confirm to proceed.", e.Command)
 }
 
-// ShellConfirmer is an interface for confirming shell commands
-type ShellConfirmer interface {
-	ConfirmCommand(command string) (bool, error)
+func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
+	name, args := bash.ParseCommand(input.Command)
+	if name == "" {
+		return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	if input.WorkingDir != "" {
+		cleanWd, _ := resolvePath(input.WorkingDir, []string{})
+		cmd.Dir = cleanWd
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
+	}
+
+	outputStr := string(output)
+
+	// truncate output
+	if len(outputStr) > maxAllowedShellOutputLen {
+		more := len(output) - maxAllowedShellOutputLen
+		outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
+	}
+
+	return string(output), nil
 }
 
-// contextKey type for context values
-type contextKey string
+func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) error {
+	// Check if command is completely blocked
+	if checkCommandBlocked(input.Command) {
+		return wrapShellError(errDangerousCommand, shellBlockedTag)
+	}
 
-const shellConfirmerKey contextKey = "shell_confirmer"
+	// Check if command needs user confirmation
+	if checkCommandNeedsConfirmation(input.Command) {
+		confirmer, ok := tool.GetConfirmer(ctx)
+		if !ok {
+			// No confirmer available, reject by default
+			return wrapShellError(errConfirmNeeded, shellConfirmNeededTag)
+		}
 
-// WithShellConfirmer adds a shell confirmer to context
-func WithShellConfirmer(ctx context.Context, confirmer ShellConfirmer) context.Context {
-	return context.WithValue(ctx, shellConfirmerKey, confirmer)
-}
+		resp, err := confirmer.RequestConfirm(ctx, &tool.ConfirmRequest{
+			Channel:     meta.Channel,
+			ChatId:      meta.ChatId,
+			ToolName:    "shell",
+			Level:       tool.ConfirmNormal,
+			Title:       "Confirm Command Execution",
+			Description: "This command may modify system state. Please confirm to proceed.",
+			Command:     input.Command,
+		})
+		if err != nil {
+			return wrapShellError(fmt.Errorf("confirmation failed: %w", err), shellConfirmNeededTag)
+		}
 
-// GetShellConfirmer retrieves shell confirmer from context
-func GetShellConfirmer(ctx context.Context) (ShellConfirmer, bool) {
-	confirmer, ok := ctx.Value(shellConfirmerKey).(ShellConfirmer)
-	return confirmer, ok
+		if !resp.Confirmed {
+			reason := "user rejected"
+			if resp.Reason != "" {
+				reason = resp.Reason
+			}
+			return wrapShellError(fmt.Errorf("command rejected: %s", reason), shellConfirmNeededTag)
+		}
+	}
+
+	return nil
 }
 
 // Tool to execute a command under the optional given working directory.
 func Shell() tool.Invoker {
-	return tool.NewInvoker(tool.Info{
+	info := tool.Info{
 		Name: "shell",
 		Description: fmt.Sprintf(
 			"Execute a shell command in %s under the optional given working directory, current working directory will be used if not provided.",
 			pkgos.GetSystemDistro(),
 		),
-	}, func(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
-		// Check if command is completely blocked
-		if checkCommandBlocked(input.Command) {
-			return "", wrapShellError(errDangerousCommand, shellBlockedTag)
-		}
-		
-		// Check if command needs user confirmation
-		if checkCommandNeedsConfirmation(input.Command) {
-			// Try to get confirmer from context
-			confirmer, ok := GetShellConfirmer(ctx)
-			if !ok {
-				// No confirmer available, return error requesting confirmation
-				return "", wrapShellError(&ConfirmationRequiredError{Command: input.Command}, shellConfirmNeededTag)
-			}
-			
-			confirmed, err := confirmer.ConfirmCommand(input.Command)
-			if err != nil {
-				return "", wrapShellError(fmt.Errorf("confirmation failed: %w", err), shellBlockedTag)
-			}
-			if !confirmed {
-				return "", wrapShellError(errors.New("command execution denied by user"), shellBlockedTag)
-			}
-		}
+	}
 
-		name, args := bash.ParseCommand(input.Command)
-		if name == "" {
-			return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
-		}
-
-		ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx, name, args...)
-		if input.WorkingDir != "" {
-			cleanWd, _ := resolvePath(input.WorkingDir, []string{})
-			cmd.Dir = cleanWd
-		}
-
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
-		}
-
-		outputStr := string(output)
-
-		// truncate output
-		if len(outputStr) > maxAllowedShellOutputLen {
-			more := len(output) - maxAllowedShellOutputLen
-			outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
-		}
-
-		return string(output), nil
-	})
+	return tool.NewInvoker(info, doShellInvoke, tool.WithBeforeInvoke(beforeDoShellInvoke))
 }

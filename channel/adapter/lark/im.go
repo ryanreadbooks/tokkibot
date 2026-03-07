@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
-	imv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
+
+	"github.com/google/uuid"
+	imv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func (a *LarkAdapter) sendMessage(
@@ -93,6 +94,99 @@ func (a *LarkAdapter) sendInteractiveMessageToChat(ctx context.Context, chatId s
 	a.sendMessageToChat(ctx, chatId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
+const (
+	confirmCardInputName      = "extra_text"
+	confirmCardButtonNameYes  = "confirm_action_yes"
+	confirmCardButtonNameNo   = "confirm_action_no"
+	confirmCardButtonValueKey = "confirm_action"
+	confirmCardButtonValueYes = "yes"
+	confirmCardButtonValueNo  = "no"
+)
+
+// TODO: 由于当前是无状态的 重启后就无法回复pending的confirmation了 难以实现 暂时不实现交互式的工具调用确认
+func (a *LarkAdapter) constructConfirmationCard(content string, disableButtons bool) *card.CardV2 {
+	formContainer := card.NewBodyFormElement("lark-confirm-form")
+	descDiv := card.NewBodyDivElement(content)
+	input := card.NewBodyInputElement().
+		WithName(confirmCardInputName).
+		WithPlaceholder("可输入描述").
+		WithWidth(card.TextWidthFill)
+
+	confirmButton := card.NewBodyButtonElement("执行").
+		WithType(card.ButtonTypePrimary).
+		WithName(confirmCardButtonNameYes).
+		WithBehavior(&card.Behavior{
+			Type: card.BehaviorTypeCallback,
+			Value: map[string]string{
+				confirmCardButtonValueKey: confirmCardButtonValueYes,
+			},
+		}).
+		WithFormActionType(card.FormActionTypeSubmit)
+	rejectButton := card.NewBodyButtonElement("拒绝").
+		WithType(card.ButtonTypeDanger).
+		WithName(confirmCardButtonNameNo).
+		WithBehavior(&card.Behavior{
+			Type: card.BehaviorTypeCallback,
+			Value: map[string]string{
+				confirmCardButtonValueKey: confirmCardButtonValueNo,
+			},
+		}).
+		WithFormActionType(card.FormActionTypeSubmit)
+	if disableButtons {
+		confirmButton.WithDisabled(true)
+		rejectButton.WithDisabled(true)
+	}
+
+	buttonCols := card.NewBodyColumnSetElement()
+	buttonCols.AddColumn(
+		card.NewColumnElement().
+			AddElement(confirmButton).
+			WithWeight(1)).
+		AddColumn(card.NewColumnElement().
+			AddElement(rejectButton).
+			WithWeight(1),
+		)
+
+	formContainer.AddElement(descDiv)
+	formContainer.AddElement(input)
+	formContainer.AddElement(buttonCols)
+
+	return card.NewCardV2Builder().
+		WithHeaderTitle("工具调用确认").
+		WithHeaderTemplate(card.HeaderTemplateOrange).
+		AppendBodyElement(formContainer).
+		Build()
+}
+
+func (a *LarkAdapter) sendConfirmationInteractiveMessage(
+	ctx context.Context,
+	receiverIdTyp string,
+	receiverId string,
+	content string,
+) {
+	card := a.constructConfirmationCard(content, false)
+	cdJson, err := json.Marshal(card)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		return
+	}
+
+	a.sendMessage(ctx, receiverIdTyp, receiverId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+}
+
+func (a *LarkAdapter) replyConfimationInteractiveCardMessage(
+	ctx context.Context, messageId string, content string,
+) (string, error) {
+	card := a.constructConfirmationCard(content, false)
+	cdJson, err := json.Marshal(card)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		return "", err
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+}
+
 func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgType string, content string) (string, error) {
 	body := imv1.NewReplyMessageReqBodyBuilder().
 		MsgType(msgType).
@@ -160,7 +254,8 @@ func (a *LarkAdapter) sendMessageReaction(ctx context.Context, messageId string,
 	}
 
 	if !resp.Success() {
-		slog.ErrorContext(ctx, "failed to send message reaction", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		slog.ErrorContext(ctx, "failed to send message reaction",
+			"error", resp.ErrorResp(), "request_id", resp.RequestId())
 		return ""
 	}
 

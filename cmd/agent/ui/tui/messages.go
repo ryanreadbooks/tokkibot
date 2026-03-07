@@ -25,8 +25,8 @@ type (
 	// TokensUpdateMsg triggers token count refresh
 	TokensUpdateMsg struct{}
 
-	// ShellConfirmMsg is an alias for types.ShellConfirmRequest
-	ShellConfirmMsg = types.ShellConfirmRequest
+	// ToolConfirmMsg represents a tool confirmation request
+	ToolConfirmMsg = types.ToolConfirmRequest
 
 	// ErrorMsg represents an error event
 	ErrorMsg error

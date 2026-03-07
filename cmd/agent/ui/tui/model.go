@@ -83,11 +83,6 @@ func (m *Model) SetProgram(program *tea.Program) {
 	m.program = program
 }
 
-// GetShellConfirmHandler returns a shell confirm handler
-func (m *Model) GetShellConfirmHandler() *handlers.ShellConfirmHandler {
-	return handlers.NewShellConfirmHandler(m.program)
-}
-
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(

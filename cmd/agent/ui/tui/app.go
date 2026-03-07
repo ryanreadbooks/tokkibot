@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ryanreadbooks/tokkibot/agent"
-	"github.com/ryanreadbooks/tokkibot/agent/tools"
 	cliadapter "github.com/ryanreadbooks/tokkibot/channel/adapter/cli"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/handlers"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/types"
@@ -36,10 +35,6 @@ func Run(
 	)
 
 	model.SetProgram(program)
-
-	shellHandler := model.GetShellConfirmHandler()
-	ctx = tools.WithShellConfirmer(ctx, shellHandler)
-	model.ctx = ctx
 
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)

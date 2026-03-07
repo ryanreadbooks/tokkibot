@@ -30,7 +30,7 @@ All tools return: `{"success": bool, "data": "...", "err": "..."}`. Always check
 | List directory | `list_dir` |
 | Run command | `shell` |
 | Fetch URL | `web_fetch` |
-| Schedule task | `schedule_cron` |
-| List/Delete cron | `list_cron` / `delete_cron` |
+| Schedule task | `schedule_cron` / `list_cron` / `delete_cron` |
 | Load reference | `load_ref` |
 | Use skill | `use_skill` |
+| Todo/Task| `todo_write` |

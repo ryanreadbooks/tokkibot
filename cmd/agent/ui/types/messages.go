@@ -1,11 +1,15 @@
 package types
 
-import "time"
+import (
+	"time"
 
-// ShellConfirmRequest represents a shell confirmation request
-type ShellConfirmRequest struct {
-	Command string
-	RespCh  chan bool
+	"github.com/ryanreadbooks/tokkibot/channel/model"
+)
+
+// ToolConfirmRequest represents a tool confirmation request (using model types)
+type ToolConfirmRequest struct {
+	Request *model.ConfirmRequest
+	RespCh  chan<- *model.ConfirmResponse
 }
 
 // MessageRole represents the role of a message sender

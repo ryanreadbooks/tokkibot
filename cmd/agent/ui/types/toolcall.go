@@ -50,6 +50,8 @@ func FormatToolCallArgs(name string, argsJSON string, maxLen int) string {
 		return formatListDirArgs(args)
 	case "shell":
 		return formatShellArgs(args)
+	case "todo_write":
+		return formatTodoWriteArgs(args)
 	default:
 		return formatGenericArgs(args, maxLen)
 	}
@@ -122,6 +124,55 @@ func formatShellArgs(args map[string]interface{}) string {
 		return fmt.Sprintf("$ %s", truncateString(cmd, 70))
 	}
 	return formatGenericArgs(args, 100)
+}
+
+func formatTodoWriteArgs(args map[string]interface{}) string {
+	todosRaw, ok := args["todos"]
+	if !ok {
+		return formatGenericArgs(args, 100)
+	}
+
+	todos, ok := todosRaw.([]interface{})
+	if !ok {
+		return formatGenericArgs(args, 100)
+	}
+
+	if len(todos) == 0 {
+		return "📋 No todos"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📋 Todo List:\n")
+	completed := 0
+	for _, todoRaw := range todos {
+		todo, ok := todoRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		content, _ := todo["content"].(string)
+		status, _ := todo["status"].(string)
+
+		marker := ""
+		suffix := ""
+		switch status {
+		case "pending":
+			marker = "[ ]"
+		case "in_progress":
+			marker = "[>]"
+			suffix = " ← working"
+		case "completed":
+			marker = "[x]"
+			completed++
+		default:
+			marker = "[ ]"
+		}
+
+		fmt.Fprintf(&sb, "  %s %s%s\n", marker, truncateString(content, 50), suffix)
+	}
+
+	sb.WriteString(fmt.Sprintf("  (%d/%d completed)", completed, len(todos)))
+	return sb.String()
 }
 
 func formatGenericArgs(args map[string]interface{}, maxLen int) string {

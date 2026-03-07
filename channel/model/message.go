@@ -18,11 +18,47 @@ type StreamTool struct {
 	Arguments string
 }
 
+// ConfirmRequest represents a tool confirmation request
+type ConfirmRequest struct {
+	Channel     Type
+	ChatId      string
+	ToolName    string
+	Level       int
+	Title       string
+	Description string
+	Command     string
+	Metadata    map[string]any
+}
+
+// ConfirmResponse represents user's response to confirmation
+type ConfirmResponse struct {
+	Confirmed bool
+	Reason    string
+}
+
+// ConfirmEvent wraps a confirmation request with response channel
+type ConfirmEvent struct {
+	Request *ConfirmRequest
+
+	// gateway will block until receiving response from this channel
+	RespCh chan<- *ConfirmResponse
+}
+
+func MakeConfirmRespYes(respCh chan<- *ConfirmResponse, content string) {
+	respCh <- &ConfirmResponse{Confirmed: true, Reason: content}
+}
+
+func MakeConfirmRespNo(respCh chan<- *ConfirmResponse, content string) {
+	respCh <- &ConfirmResponse{Confirmed: false, Reason: content}
+}
+
 // Callback handlers for streaming
 type (
 	StreamContentHandler func(*StreamContent)
 	StreamToolHandler    func(*StreamTool)
 	StreamDoneHandler    func()
+
+	ConfirmHandler func(*ConfirmEvent)
 )
 
 type IncomingMessage struct {
@@ -44,6 +80,8 @@ type IncomingMessage struct {
 	OnContent StreamContentHandler
 	OnTool    StreamToolHandler
 	OnDone    StreamDoneHandler
+
+	OnConfirmWaiting ConfirmHandler
 }
 
 func (m *IncomingMessage) EmitContent(content *StreamContent) {
@@ -61,6 +99,12 @@ func (m *IncomingMessage) EmitTool(tool *StreamTool) {
 func (m *IncomingMessage) EmitDone() {
 	if m.OnDone != nil {
 		m.OnDone()
+	}
+}
+
+func (m *IncomingMessage) EmitConfirm(event *ConfirmEvent) {
+	if m.OnConfirmWaiting != nil {
+		m.OnConfirmWaiting(event)
 	}
 }
 

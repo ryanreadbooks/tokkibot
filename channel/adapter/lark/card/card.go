@@ -63,34 +63,39 @@ type Config struct {
 	StreamingConfig *StreamingConfig `json:"streaming_config,omitempty"`
 }
 
-type TextTag string
+type HeaderTemplate string
 
+// https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/title#06994f37
 const (
-	TextTagPlainText TextTag = "plain_text"
-	TextTagLarkMd    TextTag = "lark_md"
-)
-
-type TextAlign string
-
-const (
-	TextAlignLeft   TextAlign = "left"
-	TextAlignCenter TextAlign = "center"
-	TextAlignRight  TextAlign = "right"
+	HeaderTemplateBlue      HeaderTemplate = "blue"
+	HeaderTemplateWathet    HeaderTemplate = "wathet"
+	HeaderTemplateTurquoise HeaderTemplate = "turquoise"
+	HeaderTemplateGreen     HeaderTemplate = "green"
+	HeaderTemplateYellow    HeaderTemplate = "yellow"
+	HeaderTemplateOrange    HeaderTemplate = "orange"
+	HeaderTemplateRed       HeaderTemplate = "red"
+	HeaderTemplateCarmine   HeaderTemplate = "carmine"
+	HeaderTemplateViolet    HeaderTemplate = "violet"
+	HeaderTemplatePurple    HeaderTemplate = "purple"
+	HeaderTemplateIndigo    HeaderTemplate = "indigo"
+	HeaderTemplateGrey      HeaderTemplate = "grey"
+	HeaderTemplateDefault   HeaderTemplate = "default"
 )
 
 type Header struct {
 	Title    *HeaderTitle    `json:"title,omitempty"`
 	Subtitle *HeaderSubtitle `json:"subtitle,omitempty"`
+	Template HeaderTemplate  `json:"template,omitempty"`
 }
 
 type HeaderTitle struct {
-	Tag     TextTag `json:"tag"`     // plain_text or lark_md
-	Content string  `json:"content"` // title content
+	Tag     TextTag `json:"tag"`
+	Content string  `json:"content"`
 }
 
 type HeaderSubtitle struct {
-	Tag     TextTag `json:"tag"`     // plain_text or lark_md
-	Content string  `json:"content"` // subtitle content
+	Tag     TextTag `json:"tag"`
+	Content string  `json:"content"`
 }
 
 type Body struct {
@@ -100,38 +105,6 @@ type Body struct {
 type BodyElement interface {
 	Tag() string
 	MarshalJSON() ([]byte, error)
-}
-
-type BodyDivElement struct {
-	ElementId string              `json:"element_id,omitempty"`
-	Text      *BodyDivElementText `json:"text,omitempty"`
-}
-
-type BodyDivElementText struct {
-	Tag     TextTag `json:"tag"`     // plain_text or lark_md
-	Content string  `json:"content"` // text content
-}
-
-func (e *BodyDivElement) Tag() string {
-	return "div"
-}
-
-func (e *BodyDivElement) MarshalJSON() ([]byte, error) {
-	return messageCardElementJson(e)
-}
-
-type BodyMarkdownElement struct {
-	Content   string    `json:"content,omitempty"`
-	ElementId string    `json:"element_id,omitempty"`
-	TextAlign TextAlign `json:"text_align,omitempty"`
-}
-
-func (e *BodyMarkdownElement) Tag() string {
-	return "markdown"
-}
-
-func (e *BodyMarkdownElement) MarshalJSON() ([]byte, error) {
-	return messageCardElementJson(e)
 }
 
 type CardV2Builder struct {
@@ -150,7 +123,7 @@ func (b *CardV2Builder) Build() *CardV2 {
 	return b.card
 }
 
-func (b *CardV2Builder) SetHeaderTitle(title string) *CardV2Builder {
+func (b *CardV2Builder) WithHeaderTitle(title string) *CardV2Builder {
 	if b.card.Header == nil {
 		b.card.Header = &Header{}
 	}
@@ -161,7 +134,15 @@ func (b *CardV2Builder) SetHeaderTitle(title string) *CardV2Builder {
 	return b
 }
 
-func (b *CardV2Builder) SetHeaderSubtitle(subtitle string) *CardV2Builder {
+func (b *CardV2Builder) WithHeaderTemplate(template HeaderTemplate) *CardV2Builder {
+	if b.card.Header == nil {
+		b.card.Header = &Header{}
+	}
+	b.card.Header.Template = template
+	return b
+}
+
+func (b *CardV2Builder) WithHeaderSubtitle(subtitle string) *CardV2Builder {
 	if b.card.Header == nil {
 		b.card.Header = &Header{}
 	}
@@ -178,15 +159,4 @@ func (b *CardV2Builder) AppendBodyElement(element BodyElement) *CardV2Builder {
 	}
 	b.card.Body.Elements = append(b.card.Body.Elements, element)
 	return b
-}
-
-func NewBodyMarkdownElement(content string) *BodyMarkdownElement {
-	return &BodyMarkdownElement{
-		Content: content,
-	}
-}
-
-func (e *BodyMarkdownElement) SetElementId(elementId string) *BodyMarkdownElement {
-	e.ElementId = elementId
-	return e
 }

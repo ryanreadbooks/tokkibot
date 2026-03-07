@@ -13,7 +13,7 @@ import (
 
 func (a *LarkAdapter) createCardEntityForStream(ctx context.Context, elementId string) (string, error) {
 	c := card.NewCardV2Builder().
-		AppendBodyElement(card.NewBodyMarkdownElement("").SetElementId(elementId)). // placeholder for streaming
+		AppendBodyElement(card.NewBodyMarkdownElement("").WithElementId(elementId)). // placeholder for streaming
 		Build()
 	c.Config = &card.Config{
 		StreamingMode: true,

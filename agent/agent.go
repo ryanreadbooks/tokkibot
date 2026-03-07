@@ -110,6 +110,7 @@ func (a *Agent) registerTools() {
 	a.RegisterTool(tools.ScheduleCron())
 	a.RegisterTool(tools.ListCron())
 	a.RegisterTool(tools.DeleteCron())
+	a.RegisterTool(tools.TodoWrite())
 }
 
 func (a *Agent) RegisterTool(tool tool.Invoker) {

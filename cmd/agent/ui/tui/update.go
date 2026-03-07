@@ -49,8 +49,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TokensUpdateMsg:
 		return m.handleTokensUpdate(msg), nil
 
-	case ShellConfirmMsg:
-		return m.handleShellConfirm(msg), nil
+	case ToolConfirmMsg:
+		return m.handleToolConfirm(msg), nil
 
 	case ErrorMsg:
 		m.err = msg
@@ -176,6 +176,18 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 			program.Send(ToolCallMsg{})
 		}()
 
+		// Consume confirmation stream
+		go func() {
+			for event := range stream.Confirm {
+				if event != nil {
+					program.Send(ToolConfirmMsg{
+						Request: event.Request,
+						RespCh:  event.RespCh,
+					})
+				}
+			}
+		}()
+
 		// Reset input (this will refocus automatically)
 		m.input.Reset()
 
@@ -246,9 +258,9 @@ func (m Model) handleTokensUpdate(msg TokensUpdateMsg) Model {
 	return m
 }
 
-// handleShellConfirm handles shell confirmation requests
-func (m Model) handleShellConfirm(msg ShellConfirmMsg) Model {
-	m.confirm.Show(msg.Command, msg.RespCh)
+// handleToolConfirm handles tool confirmation requests
+func (m Model) handleToolConfirm(msg ToolConfirmMsg) Model {
+	m.confirm.Show(msg.Request, msg.RespCh)
 	return m
 }
 

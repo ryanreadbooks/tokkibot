@@ -33,6 +33,7 @@ func NewAgentHandler(ag *agent.Agent, adapter *cliadapter.CLIAdapter) *AgentHand
 type StreamResult struct {
 	Content  <-chan *StreamContent
 	ToolCall <-chan *StreamToolCall
+	Confirm  <-chan *model.ConfirmEvent
 }
 
 type StreamContent struct {
@@ -53,6 +54,7 @@ func (h *AgentHandler) SendMessage(ctx context.Context, content string) *StreamR
 
 	contentCh := make(chan *StreamContent, 16)
 	toolCallCh := make(chan *StreamToolCall, 16)
+	confirmCh := make(chan *model.ConfirmEvent, 1)
 
 	go func() {
 		for c := range result.Content {
@@ -76,9 +78,17 @@ func (h *AgentHandler) SendMessage(ctx context.Context, content string) *StreamR
 		close(toolCallCh)
 	}()
 
+	go func() {
+		for event := range result.Confirm {
+			confirmCh <- event
+		}
+		close(confirmCh)
+	}()
+
 	return &StreamResult{
 		Content:  contentCh,
 		ToolCall: toolCallCh,
+		Confirm:  confirmCh,
 	}
 }
 
@@ -146,18 +156,28 @@ func convertSessionLogItem(item session.LogItem) []types.Message {
 
 		hasToolCalls := len(assistantParam.ToolCalls) > 0
 
-		// Order: thinking -> tool calls -> content
-		// 1. If has tool calls, show thinking first (separate from content)
-		if hasToolCalls && reasoningContent != "" {
-			messages = append(messages, types.Message{
-				Role:             types.RoleAssistant,
-				ReasoningContent: reasoningContent,
-				Timestamp:        timestamp,
-			})
-		}
-
-		// 2. Add tool call messages
+		// Order: thinking -> content -> tool calls
+		// Assistant speaks first (e.g., "Let me run this..."), then calls tools
 		if hasToolCalls {
+			// 1. Show thinking first (separate from content)
+			if reasoningContent != "" {
+				messages = append(messages, types.Message{
+					Role:             types.RoleAssistant,
+					ReasoningContent: reasoningContent,
+					Timestamp:        timestamp,
+				})
+			}
+
+			// 2. Show content (assistant's speech before tool calls)
+			if content != "" {
+				messages = append(messages, types.Message{
+					Role:      types.RoleAssistant,
+					Content:   content,
+					Timestamp: timestamp,
+				})
+			}
+
+			// 3. Add tool call messages (shown last)
 			for _, tc := range assistantParam.ToolCalls {
 				if tc.Function != nil {
 					messages = append(messages, types.Message{
@@ -168,18 +188,6 @@ func convertSessionLogItem(item session.LogItem) []types.Message {
 						Timestamp:     timestamp,
 					})
 				}
-			}
-		}
-
-		// 3. Add content (and reasoning if no tool calls)
-		if hasToolCalls {
-			// Only content after tool calls (thinking already shown)
-			if content != "" {
-				messages = append(messages, types.Message{
-					Role:      types.RoleAssistant,
-					Content:   content,
-					Timestamp: timestamp,
-				})
 			}
 		} else {
 			// No tool calls - show content and reasoning together
