@@ -43,7 +43,7 @@ func bootstrapConfig(configPath string) error {
 	}
 
 	cfg := config.BootstrapConfig()
-	output, err := cfg.ToYaml()
+	output, err := cfg.ToJson()
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

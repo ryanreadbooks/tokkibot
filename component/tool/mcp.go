@@ -19,7 +19,10 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-const maxAllowedMcpToolOutputChars = 20000
+const (
+	maxAllowedMcpToolOutputChars = 20000
+	httpConnectTimeout           = time.Second * 10
+)
 
 // Wrap mcp to tool
 type McpTool struct {
@@ -104,27 +107,40 @@ func (m *McpTool) Invoke(ctx context.Context, meta InvokeMeta, arguments string)
 	return rawOutput, nil
 }
 
+type McpServerStatus struct {
+	Name      string
+	Config    config.McpServer
+	OK        bool
+	ToolCount int
+	Error     string
+}
+
 type McpToolManager struct {
-	mu    sync.RWMutex
-	tools map[string]*McpTool
+	mu      sync.RWMutex
+	tools   map[string]*McpTool
+	servers map[string]*McpServerStatus
 }
 
 func NewMcpToolManager() *McpToolManager {
 	m := McpToolManager{
-		tools: make(map[string]*McpTool),
+		tools:   make(map[string]*McpTool),
+		servers: make(map[string]*McpServerStatus),
 	}
 
 	return &m
 }
 
 func (m *McpToolManager) Init(ctx context.Context, c config.McpConfig) error {
-	mcpTools := m.initMcpTools(ctx, c)
+	mcpTools, serverStatuses := m.initMcpTools(ctx, c)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for serverName, tools := range mcpTools {
 		for _, tool := range tools {
 			m.tools[formatMcpToolKey(serverName, tool.raw)] = tool
 		}
+	}
+	for name, status := range serverStatuses {
+		m.servers[name] = status
 	}
 
 	return nil
@@ -144,6 +160,21 @@ func (m *McpToolManager) ListTools() []*McpTool {
 	})
 
 	return tools
+}
+
+func (m *McpToolManager) ListServers() []*McpServerStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	servers := make([]*McpServerStatus, 0, len(m.servers))
+	for _, s := range m.servers {
+		servers = append(servers, s)
+	}
+
+	slices.SortFunc(servers, func(a, b *McpServerStatus) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	return servers
 }
 
 // name is prepended with the server name for better uniqueness
@@ -187,24 +218,28 @@ func (m *McpToolManager) startAndInitializeMcpClient(ctx context.Context, cli *m
 
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			// update tools to newTools
+
+			// Remove old tools for this server
+			for key, t := range m.tools {
+				if t.serverName == serverName {
+					delete(m.tools, key)
+				}
+			}
+
+			// Add new tools
 			for _, tool := range newTools.Tools {
 				key := formatMcpToolKey(serverName, tool)
-				if oldTool, ok := m.tools[key]; ok {
-					m.tools[key] = &McpTool{
-						serverName: serverName,
-						sc:         oldTool.sc,
-						raw:        tool,
-						client:     cli,
-					}
-				} else {
-					m.tools[key] = &McpTool{
-						serverName: serverName,
-						sc:         sc,
-						raw:        tool,
-						client:     cli,
-					}
+				m.tools[key] = &McpTool{
+					serverName: serverName,
+					sc:         sc,
+					raw:        tool,
+					client:     cli,
 				}
+			}
+
+			// Update server status tool count
+			if status, ok := m.servers[serverName]; ok {
+				status.ToolCount = len(newTools.Tools)
 			}
 		}
 	})
@@ -255,6 +290,9 @@ func (m *McpToolManager) listMcpStreamableHttpServerTools(ctx context.Context, s
 		return nil, fmt.Errorf("failed to create streamable http mcp client: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, httpConnectTimeout)
+	defer cancel()
+
 	if err = m.startAndInitializeMcpClient(ctx, cli, serverName, server); err != nil {
 		return nil, err
 	}
@@ -287,6 +325,9 @@ func (m *McpToolManager) listMcpSseServerTools(ctx context.Context, serverName s
 		return nil, fmt.Errorf("failed to create sse mcp client: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, httpConnectTimeout)
+	defer cancel()
+
 	if err = m.startAndInitializeMcpClient(ctx, cli, serverName, server); err != nil {
 		return nil, err
 	}
@@ -318,36 +359,52 @@ func (m *McpToolManager) listMcpHttpServerTools(ctx context.Context, serverName 
 	return m.listMcpSseServerTools(ctx, serverName, server)
 }
 
-func (m *McpToolManager) initMcpTools(ctx context.Context, mcpConfig config.McpConfig) map[string][]*McpTool {
+func (m *McpToolManager) initMcpTools(ctx context.Context, mcpConfig config.McpConfig) (map[string][]*McpTool, map[string]*McpServerStatus) {
 	wg := sync.WaitGroup{}
 	mu := sync.Mutex{}
 	tools := make(map[string][]*McpTool, len(mcpConfig.McpServers))
+	statuses := make(map[string]*McpServerStatus, len(mcpConfig.McpServers))
+
 	for serverName, server := range mcpConfig.McpServers {
 		wg.Go(func() {
+			status := &McpServerStatus{
+				Name:   serverName,
+				Config: server,
+			}
+
 			err := server.Validate()
 			if err != nil {
+				status.Error = err.Error()
+				mu.Lock()
+				statuses[serverName] = status
+				mu.Unlock()
 				return
 			}
 
+			var mcpTools []*McpTool
 			if server.Command != "" {
-				if mcpTools, err := m.listMcpStdioServerTools(ctx, serverName, server); err == nil {
-					mu.Lock()
-					tools[serverName] = append(tools[serverName], mcpTools...)
-					mu.Unlock()
-				}
+				mcpTools, err = m.listMcpStdioServerTools(ctx, serverName, server)
 			} else {
-				if mcpTools, err := m.listMcpHttpServerTools(ctx, serverName, server); err == nil {
-					mu.Lock()
-					tools[serverName] = append(tools[serverName], mcpTools...)
-					mu.Unlock()
-				}
+				mcpTools, err = m.listMcpHttpServerTools(ctx, serverName, server)
 			}
+
+			if err != nil {
+				status.Error = err.Error()
+			} else {
+				status.OK = true
+				status.ToolCount = len(mcpTools)
+				tools[serverName] = append(tools[serverName], mcpTools...)
+			}
+
+			mu.Lock()
+			statuses[serverName] = status
+			mu.Unlock()
 		})
 	}
 
 	wg.Wait()
 
-	return tools
+	return tools, statuses
 }
 
 func (m *McpToolManager) Close() {

@@ -31,24 +31,28 @@ This creates the configuration file and workspace in `~/.tokkibot/`.
 
 ### Configuration
 
-Edit `~/.tokkibot/config.yaml`:
+Edit `~/.tokkibot/config.json`:
 
-```yaml
-default_provider: "openai"
-
-providers:
-  openai:
-    api_key: "${OPENAI_API_KEY}"
-    base_url: "https://api.openai.com/v1"
-    default_model: "gpt-4o-mini"
-
-adapters:
-  lark:
-    app_id: "your-app-id"
-    app_secret: "your-app-secret"
-
-agent:
-  max_iteration: 30
+```json
+{
+  "defaultProvider": "openai",
+  "providers": {
+    "openai": {
+      "apiKey": "${OPENAI_API_KEY}",
+      "baseURL": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o-mini"
+    }
+  },
+  "adapters": {
+    "lark": {
+      "appId": "your-app-id",
+      "appSecret": "your-app-secret"
+    }
+  },
+  "agent": {
+    "maxIteration": 30
+  }
+}
 ```
 
 ## Usage
@@ -118,7 +122,8 @@ Default workspace is located at `~/.tokkibot/`:
 
 ```
 ~/.tokkibot/
-├── config.yaml      # Configuration file
+├── config.json      # Configuration file
+├── mcp.json         # MCP servers configuration (optional)
 ├── prompts/         # System prompts (customizable)
 ├── memory/          # Long-term memory
 │   └── LONG-TERM.md

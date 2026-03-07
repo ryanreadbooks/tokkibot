@@ -31,24 +31,28 @@ tokkibot onboard
 
 ### 配置
 
-编辑 `~/.tokkibot/config.yaml`：
+编辑 `~/.tokkibot/config.json`：
 
-```yaml
-default_provider: "openai"
-
-providers:
-  openai:
-    api_key: "${OPENAI_API_KEY}"
-    base_url: "https://api.openai.com/v1"
-    default_model: "gpt-4o-mini"
-
-adapters:
-  lark:
-    app_id: "your-app-id"
-    app_secret: "your-app-secret"
-
-agent:
-  max_iteration: 30
+```json
+{
+  "defaultProvider": "openai",
+  "providers": {
+    "openai": {
+      "apiKey": "${OPENAI_API_KEY}",
+      "baseURL": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o-mini"
+    }
+  },
+  "adapters": {
+    "lark": {
+      "appId": "your-app-id",
+      "appSecret": "your-app-secret"
+    }
+  },
+  "agent": {
+    "maxIteration": 30
+  }
+}
 ```
 
 ## 使用
@@ -118,7 +122,8 @@ tokkibot cron delete daily-report
 
 ```
 ~/.tokkibot/
-├── config.yaml      # 配置文件
+├── config.json      # 配置文件
+├── mcp.json         # MCP 服务器配置（可选）
 ├── prompts/         # 系统提示词（可自定义）
 ├── memory/          # 长期记忆
 │   └── LONG-TERM.md

@@ -27,7 +27,7 @@ func MustInit() {
 	}
 }
 
-const configFileName = "config.yaml"
+const configFileName = "config.json"
 
 // tokkibot workspace directory, usually $HOME/.tokkibot
 func GetWorkspaceDir() string {

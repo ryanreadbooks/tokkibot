@@ -2,9 +2,8 @@ package gateway
 
 import (
 	"fmt"
-	"slices"
-	"unicode/utf8"
 	"strings"
+	"unicode/utf8"
 
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
@@ -51,8 +50,8 @@ const helpMessage = `**Available Commands:**
 - /compact - Compact context (compress tool calls and summarize history)
 - /skill list - List all available skills
 - /skill info <name> - Show skill details
-- /mcp list - List all available MCP tools
-- /mcp info <name> - Show MCP tool details
+- /mcp list - List all MCP servers and status
+- /mcp info <server> - Show server tools
 - /help - Show this help message`
 
 // handleControl handles control commands and returns true if handled
@@ -213,69 +212,82 @@ func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage) {
 }
 
 func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
-	tools := g.agent.ListMcpTools()
-	if len(tools) == 0 {
-		g.sendResponse(rawMsg, "No MCP tools available")
+	servers := g.agent.ListMcpServers()
+	if len(servers) == 0 {
+		g.sendResponse(rawMsg, "No MCP servers configured")
 		return
-	}
-
-	// Group tools by server name
-	grouped := make(map[string][]*tool.McpTool)
-	for _, t := range tools {
-		serverName := t.ServerName()
-		grouped[serverName] = append(grouped[serverName], t)
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "**Available MCP Tools (%d):**\n", len(tools))
-	for serverName, serverTools := range grouped {
-		fmt.Fprintf(&sb, "\n**[%s]**\n", serverName)
-		for _, t := range serverTools {
-			info := t.Info()
-			desc := info.Description
-			truncated := xstring.Truncate(desc, 56)
-			if utf8.RuneCountInString(desc) > utf8.RuneCountInString(truncated) {
-				truncated += "..."
-			}
-
-			fmt.Fprintf(&sb, "- **%s** - %s\n", t.ToolName(), truncated)
+	fmt.Fprintf(&sb, "**MCP Servers (%d):**\n\n", len(servers))
+	fmt.Fprintf(&sb, "| Server | Status | Tools |\n")
+	fmt.Fprintf(&sb, "|--------|--------|-------|\n")
+	for _, s := range servers {
+		status := "✅"
+		tools := fmt.Sprintf("%d", s.ToolCount)
+		if !s.OK {
+			status = "❌"
+			tools = "-"
 		}
+		fmt.Fprintf(&sb, "| %s | %s | %s |\n", s.Name, status, tools)
 	}
+	fmt.Fprintf(&sb, "Use `/mcp info <server>` to see tools")
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, name string) {
-	if name == "" {
-		g.sendResponse(rawMsg, "Usage: /mcp info <name>")
+func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName string) {
+	if serverName == "" {
+		g.sendResponse(rawMsg, "Usage: /mcp info <server>")
+		return
+	}
+
+	servers := g.agent.ListMcpServers()
+	var targetServer *tool.McpServerStatus
+	for _, s := range servers {
+		if s.Name == serverName {
+			targetServer = s
+			break
+		}
+	}
+
+	if targetServer == nil {
+		g.sendResponse(rawMsg, fmt.Sprintf("MCP server not found: %s", serverName))
+		return
+	}
+
+	var sb strings.Builder
+	statusIcon := "✓"
+	statusText := "ok"
+	if !targetServer.OK {
+		statusIcon = "✗"
+		statusText = fmt.Sprintf("error: %s", targetServer.Error)
+	}
+	fmt.Fprintf(&sb, "**MCP Server: %s** %s %s\n", targetServer.Name, statusIcon, statusText)
+
+	if !targetServer.OK {
+		g.sendResponse(rawMsg, sb.String())
 		return
 	}
 
 	tools := g.agent.ListMcpTools()
+	var serverTools []*tool.McpTool
 	for _, t := range tools {
-		info := t.Info()
-		// Match by tool name or full name (serverName_toolName)
-		if t.ToolName() == name || info.Name == name {
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "**MCP Tool: %s** [%s]\n", t.ToolName(), t.ServerName())
-			fmt.Fprintf(&sb, "- Description: %s\n", info.Description)
-			if info.Schema != nil {
-				if props, ok := info.Schema.Properties.(map[string]any); ok && len(props) > 0 {
-					fmt.Fprintf(&sb, "- Parameters:\n")
-					for k := range props {
-						required := ""
-						if slices.Contains(info.Schema.Required, k) {
-							required = " (required)"
-						}
-						fmt.Fprintf(&sb, "  - %s%s\n", k, required)
-					}
-				}
-			}
-			g.sendResponse(rawMsg, sb.String())
-			return
+		if t.ServerName() == serverName {
+			serverTools = append(serverTools, t)
 		}
 	}
 
-	g.sendResponse(rawMsg, fmt.Sprintf("MCP tool not found: %s", name))
+	fmt.Fprintf(&sb, "\n**Tools (%d):**\n", len(serverTools))
+	for _, t := range serverTools {
+		info := t.Info()
+		desc := info.Description
+		truncated := xstring.Truncate(desc, 56)
+		if utf8.RuneCountInString(desc) > utf8.RuneCountInString(truncated) {
+			truncated += "..."
+		}
+		fmt.Fprintf(&sb, "- **%s** - %s\n", t.ToolName(), truncated)
+	}
+	g.sendResponse(rawMsg, sb.String())
 }
 
 // sendResponse sends a response back through the message callbacks

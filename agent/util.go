@@ -71,3 +71,10 @@ func (a *Agent) ListMcpTools() []*tool.McpTool {
 	}
 	return nil
 }
+
+func (a *Agent) ListMcpServers() []*tool.McpServerStatus {
+	if a.mcpLoaded.Load() {
+		return a.mcpManager.ListServers()
+	}
+	return nil
+}

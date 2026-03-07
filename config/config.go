@@ -1,11 +1,9 @@
 package config
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
-
-	"gopkg.in/yaml.v3"
 )
 
 var conf Config
@@ -22,40 +20,32 @@ const (
 )
 
 type ProviderConfig struct {
-	ApiKey                       string  `yaml:"api_key"`
-	BaseURL                      string  `yaml:"base_url"`
-	DefaultModel                 string  `yaml:"default_model"`
-	EnableThinking               *bool   `yaml:"enable_thinking,omitempty"`
-	Temperature                  float64 `yaml:"temperature,omitempty"`
-	MaxTokens                    int     `yaml:"max_tokens,omitempty"`
-	WindowLimit                  int64   `yaml:"window_limit,omitempty"`
-	CompactThresholdPercentage   float64 `yaml:"compact_threshold_percentage,omitempty"`
-	SummarizeThresholdPercentage float64 `yaml:"summarize_threshold_percentage,omitempty"`
-	ToolCallCompressThreshold    int     `yaml:"tool_call_compress_threshold,omitempty"`
+	ApiKey                       string  `json:"apiKey"`
+	BaseURL                      string  `json:"baseURL"`
+	DefaultModel                 string  `json:"defaultModel"`
+	EnableThinking               *bool   `json:"enableThinking,omitempty"`
+	Temperature                  float64 `json:"temperature,omitempty"`
+	MaxTokens                    int     `json:"maxTokens,omitempty"`
+	WindowLimit                  int64   `json:"windowLimit,omitempty"`
+	CompactThresholdPercentage   float64 `json:"compactThresholdPercentage,omitempty"`
+	SummarizeThresholdPercentage float64 `json:"summarizeThresholdPercentage,omitempty"`
+	ToolCallCompressThreshold    int     `json:"toolCallCompressThreshold,omitempty"`
 }
 
 type AgentConfig struct {
-	MaxIteration int `yaml:"max_iteration"`
+	MaxIteration int `json:"maxIteration"`
 }
 
 // The configuration for the tokkibot.
 type Config struct {
-	DefaultProvider string                    `yaml:"default_provider"`
-	Providers       map[string]ProviderConfig `yaml:"providers"`
-	Adapters        AdapterConfig             `yaml:"adapters"`
-	Agent           AgentConfig               `yaml:"agent"`
+	DefaultProvider string                    `json:"defaultProvider"`
+	Providers       map[string]ProviderConfig `json:"providers"`
+	Adapters        AdapterConfig             `json:"adapters"`
+	Agent           AgentConfig               `json:"agent"`
 }
 
-func (c *Config) ToYaml() ([]byte, error) {
-	buf := bytes.NewBuffer(nil)
-	encoder := yaml.NewEncoder(buf)
-	encoder.SetIndent(4)
-	err := encoder.Encode(c)
-	if err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
+func (c *Config) ToJson() ([]byte, error) {
+	return json.MarshalIndent(c, "", "  ")
 }
 
 func BootstrapConfig() Config {
@@ -125,7 +115,7 @@ func LoadConfig() (c Config, err error) {
 		return
 	}
 
-	err = yaml.Unmarshal(content, &c)
+	err = json.Unmarshal(content, &c)
 	if err != nil {
 		err = fmt.Errorf("failed to unmarshal config file: %w", err)
 		return

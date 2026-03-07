@@ -1,10 +1,10 @@
 package config
 
 type AdapterConfig struct {
-	Lark LarkAdapterConfig `yaml:"lark"`
+	Lark LarkAdapterConfig `json:"lark"`
 }
 
 type LarkAdapterConfig struct {
-	AppId     string `yaml:"app_id"`
-	AppSecret string `yaml:"app_secret"`
+	AppId     string `json:"appId"`
+	AppSecret string `json:"appSecret"`
 }
