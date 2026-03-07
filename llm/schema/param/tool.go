@@ -50,8 +50,9 @@ func NewToolWithSchema(name, description string, sch schema.Schema) Tool {
 			Description: description,
 		},
 		Parameters: ToolInputSchema{
-			Properties: sch.Properties,
-			Required:   sch.Required,
+			Properties:           sch.Properties,
+			Required:             sch.Required,
+			AdditionalProperties: sch.AdditionalProperties,
 		}.Map(),
 	}
 }
@@ -65,14 +66,21 @@ func GetToolInputSchema[T any]() ToolInputSchema {
 }
 
 type ToolInputSchema struct {
-	Properties any      `json:"properties"`
-	Required   []string `json:"required"`
+	Properties           any      `json:"properties"`
+	Required             []string `json:"required"`
+	AdditionalProperties any      `json:"additionalProperties,omitempty"`
 }
 
 func (m ToolInputSchema) Map() map[string]any {
-	return map[string]any{
+	mm := map[string]any{
 		"type":       "object",
 		"properties": m.Properties,
 		"required":   m.Required,
 	}
+
+	if m.AdditionalProperties != nil {
+		mm["additionalProperties"] = m.AdditionalProperties
+	}
+
+	return mm
 }

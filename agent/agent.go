@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
@@ -50,13 +51,17 @@ type Agent struct {
 	tools   map[string]tool.Invoker
 
 	// The context manager for the agent.
-	contextMgr *agcontext.ContextManager
+	contextManager *agcontext.ContextManager
 
 	// skill loader
 	skillLoader *skill.Loader
 
 	cachedReqsMu sync.RWMutex
 	cachedReqs   map[string]*schema.Request
+
+	// mcp
+	mcpLoaded  atomic.Bool
+	mcpManager *tool.McpToolManager
 }
 
 func NewAgent(
@@ -69,7 +74,7 @@ func NewAgent(
 		os.Exit(1)
 	}
 
-	contextMgr, err := agcontext.NewContextManager(
+	contextManager, err := agcontext.NewContextManager(
 		c.RootCtx,
 		agcontext.ContextManagerConfig{
 			Workspace: config.GetWorkspaceDir(),
@@ -81,14 +86,28 @@ func NewAgent(
 		os.Exit(1)
 	}
 
-	agent := &Agent{
-		c:           c,
-		tools:       make(map[string]tool.Invoker),
-		contextMgr:  contextMgr,
-		skillLoader: skillLoader,
-		cachedReqs:  make(map[string]*schema.Request),
-		llm:         llm,
+	// mcp manager
+	mcpManager := tool.NewMcpToolManager()
+	// try to init mcp manager
+	mcpConfig, err := config.GetMcpConfig()
+	mcpLoaded := false
+	if err != nil {
+		// stay quiet
+	} else {
+		mcpLoaded = true
+		mcpManager.Init(c.RootCtx, mcpConfig)
 	}
+
+	agent := &Agent{
+		c:              c,
+		tools:          make(map[string]tool.Invoker),
+		contextManager: contextManager,
+		skillLoader:    skillLoader,
+		cachedReqs:     make(map[string]*schema.Request),
+		llm:            llm,
+		mcpManager:     mcpManager,
+	}
+	agent.mcpLoaded.Store(mcpLoaded)
 
 	agent.registerTools()
 
@@ -151,7 +170,7 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 		return nil, fmt.Errorf("failed to compact context: %w", err)
 	}
 
-	msgList, err := a.contextMgr.GetMessageContext(msg.Channel, msg.ChatId)
+	msgList, err := a.contextManager.GetMessageContext(msg.Channel, msg.ChatId)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +203,7 @@ func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) er
 	}
 
 	// Step 1: Try compressing tool calls to refs
-	compressed, err := a.contextMgr.CompressToolCalls(msg.Channel, msg.ChatId, providerCfg.ToolCallCompressThreshold)
+	compressed, err := a.contextManager.CompressToolCalls(msg.Channel, msg.ChatId, providerCfg.ToolCallCompressThreshold)
 	if err != nil {
 		return fmt.Errorf("failed to compress tool calls: %w", err)
 	}
@@ -196,7 +215,7 @@ func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) er
 	// Step 2: If over 80% threshold after compression, summarize history
 	contextSummarizeThreshold := providerCfg.GetContextSummarizeThreshold()
 	if currentTokens >= contextSummarizeThreshold {
-		err = a.contextMgr.SummarizeHistory(ctx, msg.Channel, msg.ChatId, a.summarizeMessagesWithLLM)
+		err = a.contextManager.SummarizeHistory(ctx, msg.Channel, msg.ChatId, a.summarizeMessagesWithLLM)
 		if err != nil {
 			return fmt.Errorf("failed to summarize history: %w", err)
 		}
@@ -236,12 +255,23 @@ func (a *Agent) buildLLMTools() []param.Tool {
 		))
 	}
 
+	if a.mcpLoaded.Load() {
+		// add mcp tools
+		for _, mcpTool := range a.mcpManager.ListTools() {
+			params = append(params, param.NewToolWithSchema(
+				mcpTool.Info().Name,
+				mcpTool.Info().Description,
+				*mcpTool.Info().Schema,
+			))
+		}
+	}
+
 	return params
 }
 
 // ClearSession clears all messages in a session
 func (a *Agent) ClearSession(channel, chatId string) error {
-	return a.contextMgr.ClearSession(channel, chatId)
+	return a.contextManager.ClearSession(channel, chatId)
 }
 
 // CompactSession forces context compaction for a session
@@ -249,13 +279,13 @@ func (a *Agent) CompactSession(ctx context.Context, channel, chatId string) (int
 	providerCfg := config.GetConfig().Providers[a.c.Provider]
 
 	// Step 1: Compress tool calls
-	compressed, err := a.contextMgr.CompressToolCalls(channel, chatId, providerCfg.ToolCallCompressThreshold)
+	compressed, err := a.contextManager.CompressToolCalls(channel, chatId, providerCfg.ToolCallCompressThreshold)
 	if err != nil {
 		return 0, fmt.Errorf("failed to compress tool calls: %w", err)
 	}
 
 	// Step 2: Summarize history
-	err = a.contextMgr.SummarizeHistory(ctx, channel, chatId, a.summarizeMessagesWithLLM)
+	err = a.contextManager.SummarizeHistory(ctx, channel, chatId, a.summarizeMessagesWithLLM)
 	if err != nil {
 		return compressed, fmt.Errorf("failed to summarize history: %w", err)
 	}

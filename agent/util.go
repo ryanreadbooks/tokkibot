@@ -3,6 +3,7 @@ package agent
 import (
 	"github.com/ryanreadbooks/tokkibot/agent/context/session"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
+	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/llm/estimator"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
@@ -10,7 +11,7 @@ import (
 func (a *Agent) RetrieveMessageHistory(channel, chatId string) (
 	[]session.LogItem, error,
 ) {
-	history, err := a.contextMgr.GetMessageHistory(
+	history, err := a.contextManager.GetMessageHistory(
 		channel, chatId,
 	)
 	if err != nil {
@@ -25,11 +26,11 @@ func (a *Agent) AvailableSkills() []*skill.Skill {
 }
 
 func (a *Agent) GetSystemPrompt() string {
-	return a.contextMgr.GetSystemPrompt()
+	return a.contextManager.GetSystemPrompt()
 }
 
 func (a *Agent) InitSession(channel, chatId string) error {
-	return a.contextMgr.InitSession(channel, chatId)
+	return a.contextManager.InitSession(channel, chatId)
 }
 
 func (a *Agent) GetCurrentContextTokens(channel, chatId string) int64 {
@@ -47,7 +48,7 @@ func (a *Agent) GetCurrentContextTokens(channel, chatId string) int64 {
 	a.cachedReqsMu.RUnlock()
 
 	// If no cached request, build a minimal request without triggering compaction
-	msgList, err := a.contextMgr.GetMessageContext(channel, chatId)
+	msgList, err := a.contextManager.GetMessageContext(channel, chatId)
 	if err != nil {
 		return 0
 	}
@@ -62,4 +63,11 @@ func (a *Agent) GetCurrentContextTokens(channel, chatId string) int64 {
 	}
 
 	return int64(tokens)
+}
+
+func (a *Agent) ListMcpTools() []*tool.McpTool {
+	if a.mcpLoaded.Load() {
+		return a.mcpManager.ListTools()
+	}
+	return nil
 }

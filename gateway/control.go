@@ -2,9 +2,13 @@ package gateway
 
 import (
 	"fmt"
+	"slices"
+	"unicode/utf8"
 	"strings"
 
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
 // ControlCommand represents a control command from user
@@ -16,6 +20,7 @@ const (
 	ControlCmdNew     ControlCommand = "/new"
 	ControlCmdCompact ControlCommand = "/compact"
 	ControlCmdSkill   ControlCommand = "/skill"
+	ControlCmdMcp     ControlCommand = "/mcp"
 	ControlCmdHelp    ControlCommand = "/help"
 )
 
@@ -24,6 +29,7 @@ var controlCommands = []ControlCommand{
 	ControlCmdNew,
 	ControlCmdCompact,
 	ControlCmdSkill,
+	ControlCmdMcp,
 	ControlCmdHelp,
 }
 
@@ -45,6 +51,8 @@ const helpMessage = `**Available Commands:**
 - /compact - Compact context (compress tool calls and summarize history)
 - /skill list - List all available skills
 - /skill info <name> - Show skill details
+- /mcp list - List all available MCP tools
+- /mcp info <name> - Show MCP tool details
 - /help - Show this help message`
 
 // handleControl handles control commands and returns true if handled
@@ -62,6 +70,8 @@ func (g *Gateway) handleControl(rawMsg *chmodel.IncomingMessage, cmd ControlComm
 		g.handleCompact(rawMsg)
 	case ControlCmdSkill:
 		g.handleSkill(rawMsg)
+	case ControlCmdMcp:
+		g.handleMcp(rawMsg)
 	case ControlCmdHelp:
 		g.handleHelp(rawMsg)
 	}
@@ -175,6 +185,97 @@ func (g *Gateway) handleSkillInfo(rawMsg *chmodel.IncomingMessage, name string) 
 	}
 
 	g.sendResponse(rawMsg, fmt.Sprintf("Skill not found: %s", name))
+}
+
+func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage) {
+	content := strings.TrimSpace(rawMsg.Content)
+	args := strings.TrimPrefix(content, string(ControlCmdMcp))
+	args = strings.TrimSpace(args)
+
+	parts := strings.SplitN(args, " ", 2)
+	subCmd := ""
+	subArg := ""
+	if len(parts) > 0 {
+		subCmd = strings.ToLower(parts[0])
+	}
+	if len(parts) > 1 {
+		subArg = strings.TrimSpace(parts[1])
+	}
+
+	switch subCmd {
+	case "", "list":
+		g.handleMcpList(rawMsg)
+	case "info":
+		g.handleMcpInfo(rawMsg, subArg)
+	default:
+		g.sendResponse(rawMsg, fmt.Sprintf("Unknown mcp subcommand: %s\nUsage: /mcp list | /mcp info <name>", subCmd))
+	}
+}
+
+func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
+	tools := g.agent.ListMcpTools()
+	if len(tools) == 0 {
+		g.sendResponse(rawMsg, "No MCP tools available")
+		return
+	}
+
+	// Group tools by server name
+	grouped := make(map[string][]*tool.McpTool)
+	for _, t := range tools {
+		serverName := t.ServerName()
+		grouped[serverName] = append(grouped[serverName], t)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Available MCP Tools (%d):**\n", len(tools))
+	for serverName, serverTools := range grouped {
+		fmt.Fprintf(&sb, "\n**[%s]**\n", serverName)
+		for _, t := range serverTools {
+			info := t.Info()
+			desc := info.Description
+			truncated := xstring.Truncate(desc, 56)
+			if utf8.RuneCountInString(desc) > utf8.RuneCountInString(truncated) {
+				truncated += "..."
+			}
+
+			fmt.Fprintf(&sb, "- **%s** - %s\n", t.ToolName(), truncated)
+		}
+	}
+	g.sendResponse(rawMsg, sb.String())
+}
+
+func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, name string) {
+	if name == "" {
+		g.sendResponse(rawMsg, "Usage: /mcp info <name>")
+		return
+	}
+
+	tools := g.agent.ListMcpTools()
+	for _, t := range tools {
+		info := t.Info()
+		// Match by tool name or full name (serverName_toolName)
+		if t.ToolName() == name || info.Name == name {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "**MCP Tool: %s** [%s]\n", t.ToolName(), t.ServerName())
+			fmt.Fprintf(&sb, "- Description: %s\n", info.Description)
+			if info.Schema != nil {
+				if props, ok := info.Schema.Properties.(map[string]any); ok && len(props) > 0 {
+					fmt.Fprintf(&sb, "- Parameters:\n")
+					for k := range props {
+						required := ""
+						if slices.Contains(info.Schema.Required, k) {
+							required = " (required)"
+						}
+						fmt.Fprintf(&sb, "  - %s%s\n", k, required)
+					}
+				}
+			}
+			g.sendResponse(rawMsg, sb.String())
+			return
+		}
+	}
+
+	g.sendResponse(rawMsg, fmt.Sprintf("MCP tool not found: %s", name))
 }
 
 // sendResponse sends a response back through the message callbacks

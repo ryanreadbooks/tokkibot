@@ -18,8 +18,8 @@ func formatCancelledError(ctx context.Context) string {
 
 // initMessageContext initializes session logs and appends the user message
 func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) error {
-	a.contextMgr.InitFromSessionLogs(userMsg.Channel, userMsg.ChatId)
-	_, err := a.contextMgr.AppendUserMessage(userMsg)
+	a.contextManager.InitFromSessionLogs(userMsg.Channel, userMsg.ChatId)
+	_, err := a.contextManager.AppendUserMessage(userMsg)
 	return err
 }
 
@@ -54,7 +54,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		lastResponse = llmResp
 
 		choice := llmResp.FirstChoice()
-		if err := a.contextMgr.AppendAssistantMessage(userMsg, &choice.Message); err != nil {
+		if err := a.contextManager.AppendAssistantMessage(userMsg, &choice.Message); err != nil {
 			return err.Error()
 		}
 
@@ -204,7 +204,7 @@ mainLoop:
 			assistantTcs = append(assistantTcs, tcr.tc)
 		}
 
-		err = a.contextMgr.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
+		err = a.contextManager.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
 			Content:          contentBuilder.String(),
 			ToolCalls:        assistantTcs,
 			ReasoningContent: reasoningContentBuilder.String(),
@@ -221,7 +221,7 @@ mainLoop:
 		// IMPORTANT: must save all tool results to match assistant's tool_calls
 		// even if ctx is cancelled, we need to complete the tool call sequence
 		for _, tcr := range dstTcs {
-			if err := a.contextMgr.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
+			if err := a.contextManager.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
 				emitter.EmitContent(curIter, err.Error(), "")
 				break mainLoop
 			}
@@ -237,8 +237,7 @@ func (a *Agent) handleToolCall(
 ) error {
 	toolResult := a.getToolAndInvoke(ctx, toolMeta, tc)
 	// feedback tool calling result to llm
-	err := a.contextMgr.AppendToolResult(inMsg, tc, toolResult)
-	return err
+	return a.contextManager.AppendToolResult(inMsg, tc, toolResult)
 }
 
 func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, tc *schema.CompletionToolCall) string {
@@ -248,20 +247,29 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 	default:
 	}
 
+	// try builtin tools first
 	a.toolsMu.RLock()
-	tool, ok := a.tools[tc.Function.Name]
-	if !ok {
-		a.toolsMu.RUnlock()
-		return fmt.Sprintf("(tool %s not found)", tc.Function.Name)
-	}
-
+	builtinTool, ok := a.tools[tc.Function.Name]
 	a.toolsMu.RUnlock()
 
-	// execute tool
-	toolResult, err := tool.Invoke(ctx, toolMeta, tc.Function.Arguments)
-	if err != nil {
-		toolResult = err.Error()
+	if ok {
+		result, err := builtinTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
+		if err != nil {
+			return err.Error()
+		}
+		return result
 	}
 
-	return toolResult
+	// fallback to mcp tools
+	if a.mcpLoaded.Load() {
+		if mcpTool, found := a.mcpManager.GetTool(tc.Function.Name); found {
+			result, err := mcpTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
+			if err != nil {
+				return err.Error()
+			}
+			return result
+		}
+	}
+
+	return fmt.Sprintf("(tool %s not found)", tc.Function.Name)
 }

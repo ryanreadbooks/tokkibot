@@ -10,7 +10,7 @@ import (
 type Info struct {
 	Name        string
 	Description string
-	Schema      *schema.Schema
+	Schema      *schema.Schema // input schema
 }
 
 // Invoker is the interface for all tools.

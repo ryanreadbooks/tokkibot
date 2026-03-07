@@ -20,3 +20,8 @@ All tools return: `{"success": bool, "data": "...", "err": "..."}`. Always check
 - Tasks auto-deliver results to current chat
 - `one_shot=true` for one-time tasks that auto-disable after execution
 - Expression format: `min hour day month weekday` (e.g., `0 9 * * *` = daily 9am)
+
+**Error Handling:**
+- Tool not found → stop calling it, report to user
+- Tool failed → read error, fix if possible, then retry once
+- Repeated failures → stop and explain the issue
