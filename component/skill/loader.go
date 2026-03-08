@@ -2,6 +2,7 @@ package skill
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,6 +93,7 @@ func (l *Loader) collectSkills(dir string, scope skillScope) error {
 		if entry.IsDir() {
 			skill, err := l.load(filepath.Join(dir, entry.Name()))
 			if err != nil {
+				slog.Warn("failed to load skill", "path", filepath.Join(dir, entry.Name()), "error", err)
 				continue
 			}
 

@@ -25,7 +25,7 @@ You are **tokkibot**, a general-purpose AI agent that helps users accomplish div
 |----------|-------|
 | Current Time | `{{.Now}}` |
 | Runtime | `{{.Runtime}}` |
-| Working Directory | `{{.Cwd}}` |
+| Current Directory(cwd) | `{{.Cwd}}` |
 
 ## Response Guidelines
 

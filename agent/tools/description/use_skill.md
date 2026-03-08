@@ -19,14 +19,15 @@ Load reference files or assets from the skill directory. Useful for loading temp
 - `args`: Comma-separated paths relative to skill directory
 
 ### `script`
-Execute a script/command in the skill's directory. The working directory is set to the skill's root path.
+Execute a script/command in the skill's directory.
 
 ```json
 {"name": "skill-name", "action": "script", "args": "python generate.py --input data.json"}
-{"name": "skill-name", "action": "script", "args": "node build.js --env production"}
+{"name": "skill-name", "action": "script", "args": "node scripts/build.js --env production"}
 ```
 - `args`: Full command with arguments (executed with 5-minute timeout)
 - Output is truncated to 15000 chars if too long
+- **Working directory**: The command runs with `cwd` set to the skill's root path (shown as `skill_path` in activate output). Use paths relative to skill root, or use the absolute `skill_path` directly.
 
 ## Typical Workflow
 1. `activate` — Read skill instructions to understand usage

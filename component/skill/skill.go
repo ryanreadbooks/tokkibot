@@ -1,8 +1,10 @@
 package skill
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,11 +35,11 @@ func validateCompatibility(compatibility string) bool {
 }
 
 type SkillFrontmatter struct {
-	Name          string            `yaml:"name"`
-	Description   string            `yaml:"description"`
-	License       string            `yaml:"license,omitempty"`
-	Compatibility string            `yaml:"compatibility,omitempty"`
-	Metadata      map[string]string `yaml:"metadata,omitempty"`
+	Name          string         `yaml:"name"`
+	Description   string         `yaml:"description"`
+	License       string         `yaml:"license,omitempty"`
+	Compatibility string         `yaml:"compatibility,omitempty"`
+	Metadata      map[string]any `yaml:"metadata,omitempty"`
 }
 
 // <skill>
@@ -94,7 +96,7 @@ func (s *Skill) Description() string {
 	return s.Frontmatter.Description
 }
 
-func (s *Skill) Metadata() map[string]string {
+func (s *Skill) Metadata() map[string]any {
 	return s.Frontmatter.Metadata
 }
 
@@ -131,13 +133,16 @@ func (s *Skill) AsPrompt() string {
 }
 
 func (s *Skill) Content() string {
-	return string(s.content)
+	// Prepend skill path info so the model knows where to find scripts/assets
+	header := fmt.Sprintf("[skill_path: %s]\n\n", s.rawPath)
+	return header + string(s.content)
 }
 
 func SkillsAsPrompt(skills []*Skill) string {
 	type promptSkill struct {
 		Name        string `xml:"name"`
 		Description string `xml:"description"`
+		Metadata    string `xml:"metadata,omitempty"`
 	}
 
 	type availableSkills struct {
@@ -147,9 +152,16 @@ func SkillsAsPrompt(skills []*Skill) string {
 
 	ps := make([]*promptSkill, 0, len(skills))
 	for _, skill := range skills {
+		metaJson, _ := json.Marshal(skill.Metadata())
+		metaJsonStr := string(metaJson)
+		metaJsonStr = html.UnescapeString(metaJsonStr)
+		if metaJsonStr == "null" {
+			metaJsonStr = ""
+		}
 		ps = append(ps, &promptSkill{
 			Name:        skill.Name(),
 			Description: skill.Description(),
+			Metadata:    metaJsonStr,
 		})
 	}
 

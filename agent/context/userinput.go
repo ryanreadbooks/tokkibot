@@ -17,9 +17,9 @@ type AttachmentType string
 
 const (
 	ImageAttachment AttachmentType = "image"
-	AudioAttachment AttachmentType = "audio"
-	VideoAttachment AttachmentType = "video"
 	FileAttachment  AttachmentType = "file"
+	AudioAttachment AttachmentType = "audio" // unsupported yet
+	VideoAttachment AttachmentType = "video" // unsupported yet
 )
 
 // image, audio, video, file, etc

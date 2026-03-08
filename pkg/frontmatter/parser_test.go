@@ -22,9 +22,9 @@ func TestParser(t *testing.T) {
 
 func TestParseYaml(t *testing.T) {
 	var dst struct {
-		Name        string            `yaml:"name"`
-		Description string            `yaml:"description"`
-		Metadata    map[string]string `yaml:"metadata"`
+		Name        string         `yaml:"name"`
+		Description string         `yaml:"description"`
+		Metadata    map[string]any `yaml:"metadata"`
 	}
 
 	testSrc := `---
@@ -61,6 +61,32 @@ metadata:
 	}
 
 	t.Log(string(rest))
+	t.Log(dst.Name)
+	t.Log(dst.Description)
+	t.Log(dst.Metadata)
+}
+
+func TestParse2(t *testing.T) {
+	text := `---
+name: tavily
+description: AI-optimized web search via Tavily API. Returns concise, relevant results for AI agents.
+homepage: https://tavily.com
+metadata: {"clawdbot":{"emoji":"🔍","requires":{"bins":["node"],"env":["TAVILY_API_KEY"]},"primaryEnv":"TAVILY_API_KEY"}}
+---
+
+# Tavily Search`
+
+	var dst struct {
+		Name        string         `yaml:"name"`
+		Description string         `yaml:"description"`
+		Metadata    map[string]any `yaml:"metadata"`
+	}
+
+	err := ParseYaml([]byte(text), &dst)
+	if err != nil {
+		t.Fatalf("failed to parse yaml: %v", err)
+	}
+
 	t.Log(dst.Name)
 	t.Log(dst.Description)
 	t.Log(dst.Metadata)
