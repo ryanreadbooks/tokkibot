@@ -44,6 +44,7 @@ func Prepare(ctx context.Context, agentName string, opts ...PrepareOption) (ag *
 	llm, err := factory.NewLLM(
 		factory.WithAPIKey(provider.ApiKey),
 		factory.WithBaseURL(provider.BaseURL),
+		factory.WithStyle(factory.Style(provider.Style)),
 	)
 	if err != nil {
 		err = fmt.Errorf("failed to create llm: %w", err)

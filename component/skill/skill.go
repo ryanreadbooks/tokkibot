@@ -104,6 +104,10 @@ func (s *Skill) Validate(name string) error {
 	return s.Frontmatter.validate(name)
 }
 
+func (s *Skill) Location() string {
+	return s.rawPath
+}
+
 func (s *Skill) LoadRefs(refName string) (*Refs, error) {
 	refPath := filepath.Join(s.rawPath, refName) // usaully references/ref1.md or assets/asset1.md
 	content, err := os.ReadFile(refPath)
@@ -134,14 +138,16 @@ func (s *Skill) AsPrompt() string {
 
 func (s *Skill) Content() string {
 	// Prepend skill path info so the model knows where to find scripts/assets
-	header := fmt.Sprintf("[skill_path: %s]\n\n", s.rawPath)
-	return header + string(s.content)
+	// header := fmt.Sprintf("[skill_path: %s]\n\n", s.rawPath)
+	// return header + string(s.content)
+	return string(s.content)
 }
 
 func SkillsAsPrompt(skills []*Skill) string {
 	type promptSkill struct {
 		Name        string `xml:"name"`
 		Description string `xml:"description"`
+		Location    string `xml:"location"`
 		Metadata    string `xml:"metadata,omitempty"`
 	}
 
@@ -161,6 +167,7 @@ func SkillsAsPrompt(skills []*Skill) string {
 		ps = append(ps, &promptSkill{
 			Name:        skill.Name(),
 			Description: skill.Description(),
+			Location:    skill.Location(),
 			Metadata:    metaJsonStr,
 		})
 	}

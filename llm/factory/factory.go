@@ -16,7 +16,8 @@ const (
 type Style string
 
 const (
-	StyleOpenAI Style = "openai"
+	StyleOpenAI    Style = "openai"
+	StyleAnthropic Style = "anthropic"
 )
 
 func DefaultOption() option {
@@ -44,7 +45,11 @@ type Option func(*option)
 
 func WithStyle(s Style) Option {
 	return func(o *option) {
-		o.style = s
+		if s != "" {
+			if s == StyleOpenAI || s == StyleAnthropic {
+				o.style = s
+			}
+		}
 	}
 }
 

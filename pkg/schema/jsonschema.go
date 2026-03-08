@@ -3,9 +3,9 @@ package schema
 import "github.com/invopop/jsonschema"
 
 type Schema struct {
-	Properties           any
-	Required             []string
-	AdditionalProperties any
+	Properties           any      `json:"properties,omitempty"`
+	Required             []string `json:"required,omitempty"`
+	AdditionalProperties any      `json:"additionalProperties,omitempty"`
 }
 
 func (s Schema) Ptr() *Schema {
@@ -21,6 +21,10 @@ func Get[T any]() Schema {
 
 	var v T
 	schema := reflector.Reflect(v)
+	if schema.Required == nil {
+		schema.Required = []string{}
+	}
+
 	return Schema{
 		Properties:           schema.Properties,
 		Required:             schema.Required,

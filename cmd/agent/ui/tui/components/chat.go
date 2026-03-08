@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui/styles"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/types"
@@ -12,11 +13,12 @@ import (
 
 // ChatComponent handles the chat message display area
 type ChatComponent struct {
-	viewport viewport.Model
-	messages []types.Message
-	theme    *styles.Theme
-	width    int
-	height   int
+	viewport   viewport.Model
+	messages   []types.Message
+	theme      *styles.Theme
+	width      int
+	height     int
+	mdRenderer *glamour.TermRenderer
 }
 
 // NewChatComponent creates a new chat component
@@ -25,12 +27,18 @@ func NewChatComponent(theme *styles.Theme) *ChatComponent {
 	vp.MouseWheelEnabled = true
 	vp.KeyMap = viewport.DefaultKeyMap()
 
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(76),
+	)
+
 	return &ChatComponent{
-		viewport: vp,
-		messages: make([]types.Message, 0),
-		theme:    theme,
-		width:    80,
-		height:   20,
+		viewport:   vp,
+		messages:   make([]types.Message, 0),
+		theme:      theme,
+		width:      80,
+		height:     20,
+		mdRenderer: renderer,
 	}
 }
 
@@ -102,6 +110,17 @@ func (c *ChatComponent) SetSize(width, height int) {
 	c.height = height
 	c.viewport.Width = width
 	c.viewport.Height = height
+
+	wrapWidth := width - 8
+	if wrapWidth < 40 {
+		wrapWidth = 40
+	}
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(wrapWidth),
+	)
+	c.mdRenderer = renderer
+
 	c.refresh()
 }
 
@@ -157,16 +176,27 @@ func (c *ChatComponent) renderUserMessage(content string) string {
 	return box + "\n"
 }
 
-// renderAssistantMessage renders an assistant message
+// renderAssistantMessage renders an assistant message with markdown
 func (c *ChatComponent) renderAssistantMessage(content string) string {
 	header := c.theme.Assistant.HeaderStyle.Render("Assistant:")
-	body := c.theme.Assistant.BodyStyle.Render(content)
-	
+
+	var body string
+	if c.mdRenderer != nil {
+		rendered, err := c.mdRenderer.Render(content)
+		if err == nil {
+			body = strings.TrimSpace(rendered)
+		} else {
+			body = c.theme.Assistant.BodyStyle.Render(content)
+		}
+	} else {
+		body = c.theme.Assistant.BodyStyle.Render(content)
+	}
+
 	boxWidth := c.viewport.Width - 4
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
-	
+
 	box := c.theme.Assistant.BoxStyle.Width(boxWidth).Render(header + "\n" + body)
 	return box + "\n"
 }

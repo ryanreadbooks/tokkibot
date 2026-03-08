@@ -11,13 +11,14 @@ var conf Config
 // Default values for provider config
 const (
 	defaultEnableThinking               = false
-	defaultTemperature                  = -1
-	defaultMaxTokens                    = 32768
+	defaultTemperature                  = -1 // use model default
+	defaultMaxTokens                    = -1 // use model default
 	defaultWindowLimit                  = 100000
 	defaultCompactThresholdPercentage   = 0.70
 	defaultSummarizeThresholdPercentage = 0.60
 	defaultToolCallCompressThreshold    = 30
 	defaultMaxIteration                 = 30
+	defaultStyle                        = "openai"
 )
 
 type ProviderConfig struct {
@@ -31,6 +32,7 @@ type ProviderConfig struct {
 	CompactThresholdPercentage   float64 `json:"compactThresholdPercentage,omitempty"`
 	SummarizeThresholdPercentage float64 `json:"summarizeThresholdPercentage,omitempty"`
 	ToolCallCompressThreshold    int     `json:"toolCallCompressThreshold,omitempty"`
+	Style                        string  `json:"style,omitempty"`
 }
 
 type AgentBindingMatch struct {
@@ -51,8 +53,8 @@ type AgentEntry struct {
 }
 
 type ChannelEntry struct {
-	Name    string                         `json:"name"`
-	Account map[string]json.RawMessage     `json:"account"`
+	Name    string                     `json:"name"`
+	Account map[string]json.RawMessage `json:"account"`
 }
 
 type Config struct {
@@ -77,6 +79,11 @@ func BootstrapConfig() Config {
 				ApiKey:       os.Getenv("MOONSHOT_API_KEY"),
 				BaseURL:      "https://api.moonshot.cn/v1",
 				DefaultModel: "kimi-k2.5",
+			},
+			"deepseek": {
+				ApiKey:       os.Getenv("DEEPSEEK_API_KEY"),
+				BaseURL:      "https://api.deepseek.com/v1",
+				DefaultModel: "deepseek-reasoner",
 			},
 		},
 		Agents: []AgentEntry{
