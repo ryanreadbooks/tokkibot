@@ -76,7 +76,7 @@ func (i *LogItem) UnmarshalJSON(data []byte) error {
 			continue
 		}
 
-		// expand ref: [image](@media/xxx) -> data
+		// expand ref: [image](@medias/xxx) -> data
 		matches := regMediaRef.FindStringSubmatch(part.ImageURL.URL)
 		if len(matches) > 0 {
 			refName := matches[1]

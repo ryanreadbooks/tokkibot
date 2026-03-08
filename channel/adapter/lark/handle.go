@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
@@ -58,7 +60,35 @@ type ImageMessageContent struct {
 	ImageKey string `json:"image_key"`
 }
 
-func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId string) (string, []*model.IncomingMessageAttachment, error) {
+type FileMessageContent struct {
+	FileKey  string `json:"file_key"`
+	FileName string `json:"file_name"`
+}
+
+type AudioMessageContent struct {
+	FileKey  string `json:"file_key"`
+	Duration int    `json:"duration"`
+}
+
+type ShareUserMessageContent struct {
+	UserId string `json:"user_id"` // open_id
+}
+
+type ShareChatMessageContent struct {
+	ChatId string `json:"chat_id"` // chat_id
+}
+
+type LocationMessageContent struct {
+	Name      string `json:"name"`
+	Longitude string `json:"longitude"` // xx.xx
+	Latitude  string `json:"latitude"`  // xx.xx
+}
+
+func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId string) (
+	string,
+	[]*model.IncomingMessageAttachment,
+	error,
+) {
 	var post PostMessageContent
 	err := json.Unmarshal(xstring.ToBytes(content), &post)
 	if err != nil {
@@ -108,7 +138,7 @@ func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId 
 				textBuilder.WriteString("[Image:")
 				textBuilder.WriteString(element.ImageKey)
 				textBuilder.WriteString("]")
-				if data, err := a.downloadImage(ctx, messageId, element.ImageKey); err == nil {
+				if data, err := a.downloadMessageResourceImage(ctx, messageId, element.ImageKey); err == nil {
 					attachments = append(attachments, &model.IncomingMessageAttachment{
 						Key:  wrapResourceKey(element.ImageKey),
 						Type: model.AttachmentImage,
@@ -123,14 +153,14 @@ func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId 
 				textBuilder.WriteString(element.ImageKey)
 				textBuilder.WriteString("]")
 				// download cover and video content
-				if coverData, err := a.downloadImage(ctx, messageId, element.ImageKey); err == nil {
+				if coverData, err := a.downloadMessageResourceImage(ctx, messageId, element.ImageKey); err == nil {
 					attachments = append(attachments, &model.IncomingMessageAttachment{
 						Key:  wrapResourceKey(element.ImageKey),
 						Type: model.AttachmentImage,
 						Data: coverData,
 					})
 				}
-				if videoData, err := a.downloadFile(ctx, element.FileKey); err == nil {
+				if videoData, err := a.downloadMessageResourceFile(ctx, messageId, element.FileKey); err == nil {
 					attachments = append(attachments, &model.IncomingMessageAttachment{
 						Key:  wrapResourceKey(element.FileKey),
 						Type: model.AttachmentVideo,
@@ -173,7 +203,7 @@ func (a *LarkAdapter) handleImageMessage(ctx context.Context, messageId, content
 		return "", nil, fmt.Errorf("image key is empty")
 	}
 
-	data, err := a.downloadImage(ctx, messageId, image.ImageKey)
+	data, err := a.downloadMessageResourceImage(ctx, messageId, image.ImageKey)
 	if err != nil {
 		return "", nil, err
 	}
@@ -181,30 +211,103 @@ func (a *LarkAdapter) handleImageMessage(ctx context.Context, messageId, content
 	return image.ImageKey, data, nil
 }
 
-func (a *LarkAdapter) handleFileMessage() string {
-	return ""
+func (a *LarkAdapter) handleFileMessage(ctx context.Context, messageId, content string) (string, []byte, error) {
+	// download file
+	var file FileMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &file)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if len(file.FileKey) == 0 {
+		return "", nil, fmt.Errorf("file key is empty")
+	}
+
+	data, err := a.downloadMessageResourceFile(ctx, messageId, file.FileKey)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// detect file type, video may be provided here
+	mimeType := mimetype.Detect(data)
+	// only handle text files for now
+	if !strings.Contains(mimeType.String(), "text") {
+		return "", nil, fmt.Errorf("[%s] 只支持处理文本文件", emoji.EMBARRASSED)
+	}
+
+	return file.FileName, data, nil
 }
 
-func (a *LarkAdapter) handleAudioMessage() string {
-	return ""
+func (a *LarkAdapter) handleAudioMessage(ctx context.Context, messageId, content string) (string, []byte, error) {
+	var audio AudioMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &audio)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if len(audio.FileKey) == 0 {
+		return "", nil, fmt.Errorf("file key is empty")
+	}
+
+	data, err := a.downloadMessageResourceFile(ctx, messageId, audio.FileKey)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return audio.FileKey, data, nil
 }
 
-func (a *LarkAdapter) handleMediaMessage() string {
-	return ""
+func (a *LarkAdapter) handleMediaMessage() (string, error) {
+	return "", fmt.Errorf("[%s] 我暂时还看不懂视频~", emoji.EMBARRASSED)
 }
 
-func (a *LarkAdapter) handleStickerMessage() string {
-	return ""
+func (a *LarkAdapter) handleStickerMessage() (string, error) {
+	return "", fmt.Errorf("[%s] 我暂时还看不懂表情包~", emoji.EMBARRASSED)
 }
 
-func (a *LarkAdapter) handleInteractiveMessage() string {
-	return ""
+func (a *LarkAdapter) handleInteractiveMessage(content string) string {
+	// TODO
+	return content
 }
 
-func (a *LarkAdapter) handleShareChatMessage() string {
-	return ""
+func (a *LarkAdapter) handleShareChatMessage(ctx context.Context, messageId, content string) (string, error) {
+	var shareChat ShareChatMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &shareChat)
+	if err != nil {
+		return "", err
+	}
+
+	if len(shareChat.ChatId) == 0 {
+		return "", fmt.Errorf("chat id is empty")
+	}
+
+	return fmt.Sprintf("用户分享了群聊 %s 的名片", shareChat.ChatId), nil
 }
 
-func (a *LarkAdapter) handleShareUserMessage() string {
-	return ""
+func (a *LarkAdapter) handleShareUserMessage(ctx context.Context, messageId, content string) (string, error) {
+	var shareUser ShareUserMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &shareUser)
+	if err != nil {
+		return "", err
+	}
+
+	if len(shareUser.UserId) == 0 {
+		return "", fmt.Errorf("user id is empty")
+	}
+
+	return fmt.Sprintf("用户分享了用户 %s 的名片", shareUser.UserId), nil
+}
+
+func (a *LarkAdapter) handleLocationMessage(ctx context.Context, messageId, content string) (string, error) {
+	var location LocationMessageContent
+	err := json.Unmarshal(xstring.ToBytes(content), &location)
+	if err != nil {
+		return "", err
+	}
+
+	if len(location.Name) == 0 {
+		return "", fmt.Errorf("name is empty")
+	}
+
+	return fmt.Sprintf("用户分享了位置 %s, 经度: %s, 纬度: %s", location.Name, location.Longitude, location.Latitude), nil
 }

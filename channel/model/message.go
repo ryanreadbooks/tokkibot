@@ -122,6 +122,7 @@ const (
 	AttachmentImage AttachmentType = "image"
 	AttachmentFile  AttachmentType = "file"
 	AttachmentVideo AttachmentType = "video"
+	AttachmentAudio AttachmentType = "audio"
 )
 
 type IncomingMessageAttachment struct {

@@ -181,24 +181,50 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 			Data: imageData,
 		})
 	case imv1.MsgTypeFile:
-		content = a.handleFileMessage()
+		var (
+			fileData []byte
+			fileName string
+		)
+		fileName, fileData, err = a.handleFileMessage(ctx, messageId, messageContent)
+		attachments = append(attachments, &model.IncomingMessageAttachment{
+			Key:  wrapResourceKey(fileName),
+			Type: model.AttachmentFile,
+			Data: fileData,
+		})
 	case imv1.MsgTypeAudio:
-		content = a.handleAudioMessage()
+		var (
+			audioData []byte
+			audioKey  string
+		)
+		audioKey, audioData, err = a.handleAudioMessage(ctx, messageId, messageContent)
+		attachments = append(attachments, &model.IncomingMessageAttachment{
+			Key:  wrapResourceKey(audioKey),
+			Type: model.AttachmentAudio,
+			Data: audioData,
+		})
 	case imv1.MsgTypeMedia:
-		content = a.handleMediaMessage()
+		content, err = a.handleMediaMessage()
 	case imv1.MsgTypeSticker:
-		content = a.handleStickerMessage()
+		content, err = a.handleStickerMessage()
 	case imv1.MsgTypeInteractive:
-		content = a.handleInteractiveMessage()
+		content = a.handleInteractiveMessage(messageContent)
 	case imv1.MsgTypeShareChat:
-		content = a.handleShareChatMessage()
+		content, err = a.handleShareChatMessage(ctx, messageId, messageContent)
 	case imv1.MsgTypeShareUser:
-		content = a.handleShareUserMessage()
+		content, err = a.handleShareUserMessage(ctx, messageId, messageContent)
+	case "location":
+		content, err = a.handleLocationMessage(ctx, messageId, messageContent)
 	default:
-		err = fmt.Errorf("unsupported lark message type: %s", messageType)
+		err = fmt.Errorf("[%s] 我暂时还看不懂这个消息: %s", emoji.ClownFace, messageType)
 	}
 
 	if err != nil {
+		slog.ErrorContext(ctx, "failed to handle lark message",
+			"message_id", messageId,
+			"message_type", messageType,
+			"content", messageContent,
+			"attachments", len(attachments),
+			"error", err)
 		a.sendErrorLog(ctx, senderId, err)
 		return nil
 	}

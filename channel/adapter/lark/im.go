@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
@@ -60,7 +61,8 @@ func (a *LarkAdapter) sendErrorLog(ctx context.Context, userOpenId string, err e
 		return
 	}
 
-	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, err.Error()))
+	escapedError := html.EscapeString(err.Error())
+	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, escapedError))
 }
 
 // Send card message to lark.
