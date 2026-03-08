@@ -33,13 +33,23 @@ type (
 type AgentConfig struct {
 	RootCtx context.Context
 
+	// Agent name, determines workspace and session isolation.
+	Name string
+
 	// The provider to use.
 	Provider string
 
 	// The model to use.
 	Model string
 
+	// Max tool-call iterations per request.
+	MaxIteration int
+
 	ResumeSessionId string
+
+	// WorkspaceOverride allows using a different agent's workspace (e.g. __crons uses main's workspace).
+	// If empty, derived from Name.
+	WorkspaceOverride string
 }
 
 type Agent struct {
@@ -68,16 +78,22 @@ func NewAgent(
 	llm llm.LLM,
 	c AgentConfig,
 ) *Agent {
+	agentWorkspace := c.WorkspaceOverride
+	if agentWorkspace == "" {
+		agentWorkspace = config.GetAgentWorkspaceDir(c.Name)
+	}
+
 	skillLoader := skill.NewLoader()
-	if err := skillLoader.Init(); err != nil {
-		slog.Error("[agent] failed to init skill loader, now exit", "error", err)
+	if err := skillLoader.Init(agentWorkspace); err != nil {
+		slog.Error("[agent] failed to init skill loader", "error", err)
 		os.Exit(1)
 	}
 
 	contextManager, err := agcontext.NewContextManager(
 		c.RootCtx,
 		agcontext.ContextManagerConfig{
-			Workspace: config.GetWorkspaceDir(),
+			AgentName:      c.Name,
+			AgentWorkspace: agentWorkspace,
 		},
 		skillLoader,
 	)
@@ -109,15 +125,16 @@ func NewAgent(
 	}
 	agent.mcpLoaded.Store(mcpLoaded)
 
-	agent.registerTools()
+	agent.registerTools(agentWorkspace)
 
 	return agent
 }
 
 // register tools
-func (a *Agent) registerTools() {
-	workspaceReadDir := workspace.GetAllowedReadPaths()
-	workspaceWriteDir := workspace.GetAllowedWritePaths()
+func (a *Agent) registerTools(agentWorkspace string) {
+	workspaceReadDir := workspace.GetAllowedReadPaths(agentWorkspace)
+	workspaceWriteDir := workspace.GetAllowedWritePaths(agentWorkspace)
+
 	a.RegisterTool(tools.ReadFile(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
 	a.RegisterTool(tools.WriteFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
 	a.RegisterTool(tools.ListDir(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
@@ -147,6 +164,14 @@ func (a *Agent) RegisterTool(tool tool.Invoker) {
 	}
 }
 
+func (a *Agent) Name() string {
+	return a.c.Name
+}
+
+func (a *Agent) providerConfig() config.ProviderConfig {
+	return config.GetConfig().Providers[a.c.Provider]
+}
+
 // Handling incoming message in a blocking way
 func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
 	return a.handleIncomingMessage(ctx, msg)
@@ -174,7 +199,7 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 	if err != nil {
 		return nil, err
 	}
-	providerCfg := config.GetConfig().Providers[a.c.Provider]
+	providerCfg := a.providerConfig()
 	r := schema.NewRequest(a.c.Model, msgList)
 	r.Temperature = providerCfg.Temperature
 	r.MaxTokens = int64(providerCfg.MaxTokens)
@@ -194,7 +219,7 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 
 // checkAndCompactContext checks current context size and applies compression if needed
 func (a *Agent) checkAndCompactContext(ctx context.Context, msg *UserMessage) error {
-	providerCfg := config.GetConfig().Providers[a.c.Provider]
+	providerCfg := a.providerConfig()
 	currentTokens := a.GetCurrentContextTokens(msg.Channel, msg.ChatId)
 
 	contextCompactThreshold := providerCfg.GetContextCompactThreshold()
@@ -232,7 +257,7 @@ func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []param.M
 	}
 	summaryMsg = append(summaryMsg, messages...)
 
-	providerCfg := config.GetConfig().Providers[a.c.Provider]
+	providerCfg := a.providerConfig()
 	req := schema.NewRequest(a.c.Model, summaryMsg)
 	req.Temperature = providerCfg.Temperature
 	req.MaxTokens = 2000
@@ -276,7 +301,7 @@ func (a *Agent) ClearSession(channel, chatId string) error {
 
 // CompactSession forces context compaction for a session
 func (a *Agent) CompactSession(ctx context.Context, channel, chatId string) (int, error) {
-	providerCfg := config.GetConfig().Providers[a.c.Provider]
+	providerCfg := a.providerConfig()
 
 	// Step 1: Compress tool calls
 	compressed, err := a.contextManager.CompressToolCalls(channel, chatId, providerCfg.ToolCallCompressThreshold)

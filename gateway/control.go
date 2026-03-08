@@ -97,7 +97,8 @@ func (g *Gateway) handleStop(rawMsg *chmodel.IncomingMessage) {
 func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
-	if err := g.agent.ClearSession(channel, chatId); err != nil {
+	ag := g.agentForAdapter(rawMsg.Channel)
+	if err := ag.ClearSession(channel, chatId); err != nil {
 		g.sendResponse(rawMsg, "Failed to clear session: "+err.Error())
 		return
 	}
@@ -107,7 +108,8 @@ func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage) {
 func (g *Gateway) handleCompact(rawMsg *chmodel.IncomingMessage) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
-	compressed, err := g.agent.CompactSession(rawMsg.Context(), channel, chatId)
+	ag := g.agentForAdapter(rawMsg.Channel)
+	compressed, err := ag.CompactSession(rawMsg.Context(), channel, chatId)
 	if err != nil {
 		g.sendResponse(rawMsg, "Failed to compact context: "+err.Error())
 		return
@@ -146,7 +148,8 @@ func (g *Gateway) handleSkill(rawMsg *chmodel.IncomingMessage) {
 }
 
 func (g *Gateway) handleSkillList(rawMsg *chmodel.IncomingMessage) {
-	skills := g.agent.AvailableSkills()
+	ag := g.agentForAdapter(rawMsg.Channel)
+	skills := ag.AvailableSkills()
 	if len(skills) == 0 {
 		g.sendResponse(rawMsg, "No skills available")
 		return
@@ -166,7 +169,8 @@ func (g *Gateway) handleSkillInfo(rawMsg *chmodel.IncomingMessage, name string) 
 		return
 	}
 
-	skills := g.agent.AvailableSkills()
+	ag := g.agentForAdapter(rawMsg.Channel)
+	skills := ag.AvailableSkills()
 	for _, s := range skills {
 		if s.Name() == name {
 			var sb strings.Builder
@@ -212,7 +216,8 @@ func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage) {
 }
 
 func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
-	servers := g.agent.ListMcpServers()
+	ag := g.agentForAdapter(rawMsg.Channel)
+	servers := ag.ListMcpServers()
 	if len(servers) == 0 {
 		g.sendResponse(rawMsg, "No MCP servers configured")
 		return
@@ -241,7 +246,8 @@ func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName stri
 		return
 	}
 
-	servers := g.agent.ListMcpServers()
+	ag := g.agentForAdapter(rawMsg.Channel)
+	servers := ag.ListMcpServers()
 	var targetServer *tool.McpServerStatus
 	for _, s := range servers {
 		if s.Name == serverName {
@@ -269,7 +275,7 @@ func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName stri
 		return
 	}
 
-	tools := g.agent.ListMcpTools()
+	tools := ag.ListMcpTools()
 	var serverTools []*tool.McpTool
 	for _, t := range tools {
 		if t.ServerName() == serverName {

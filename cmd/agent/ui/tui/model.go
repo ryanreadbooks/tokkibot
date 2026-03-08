@@ -37,6 +37,7 @@ type Model struct {
 	height     int
 	curRound   int
 	processing bool
+	cancelFn   context.CancelFunc
 	err        error
 }
 

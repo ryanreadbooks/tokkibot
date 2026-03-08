@@ -8,6 +8,7 @@ import (
 
 	"github.com/ryanreadbooks/tokkibot/agent"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/cron"
 	"github.com/spf13/cobra"
 )
@@ -208,8 +209,9 @@ var runCmd = &cobra.Command{
 		fmt.Printf("Running cron task '%s'...\n", taskName)
 		fmt.Printf("Prompt: %s\n\n", task.Prompt())
 
-		// prepare agent
-		ag, err := agent.Prepare(ctx)
+		ag, err := agent.Prepare(ctx, config.CronsAgentName,
+			agent.WithWorkspaceOverride(config.GetAgentWorkspaceDir(config.MainAgentName)),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to prepare agent: %w", err)
 		}

@@ -7,10 +7,15 @@ import (
 	"sync"
 )
 
+const (
+	MainAgentName  = "main"
+	CronsAgentName = "__crons"
+)
+
 var (
-	// tokkibot workspace directory, usually $HOME/.tokkibot
-	workspaceDir     string
-	workspaceDirOnce sync.Once
+	// tokkibot home directory, usually $HOME/.tokkibot
+	homeDir     string
+	homeDirOnce sync.Once
 
 	// current working directory
 	projectDir     string
@@ -18,7 +23,7 @@ var (
 )
 
 func MustInit() {
-	GetWorkspaceDir()
+	GetHomeDir()
 	GetProjectDir()
 	var err error
 	conf, err = LoadConfig()
@@ -29,20 +34,43 @@ func MustInit() {
 
 const configFileName = "config.json"
 
-// tokkibot workspace directory, usually $HOME/.tokkibot
-func GetWorkspaceDir() string {
-	workspaceDirOnce.Do(func() {
+// GetHomeDir returns the tokkibot home directory, usually $HOME/.tokkibot.
+// This is the root directory for all shared resources (config, refs, medias, crons, skills, sessions).
+func GetHomeDir() string {
+	homeDirOnce.Do(func() {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			panic(err)
 		}
-		workspaceDir = filepath.Join(home, ".tokkibot")
+		homeDir = filepath.Join(home, ".tokkibot")
 	})
 
-	return workspaceDir
+	return homeDir
 }
 
-// current working directory, usually the project directory
+// GetWorkspaceDir is an alias for GetHomeDir.
+// Deprecated: Use GetHomeDir instead.
+func GetWorkspaceDir() string {
+	return GetHomeDir()
+}
+
+// GetAgentWorkspaceDir returns the workspace directory for the specified agent.
+//   - main agent: ~/.tokkibot/workspace
+//   - other agents: ~/.tokkibot/workspace-{agentName}
+func GetAgentWorkspaceDir(agentName string) string {
+	if agentName == MainAgentName {
+		return filepath.Join(GetHomeDir(), "workspace")
+	}
+	return filepath.Join(GetHomeDir(), "workspace-"+agentName)
+}
+
+// GetAgentSessionsDir returns the sessions directory for the specified agent.
+// Path: ~/.tokkibot/sessions/{agentName}
+func GetAgentSessionsDir(agentName string) string {
+	return filepath.Join(GetHomeDir(), "sessions", agentName)
+}
+
+// GetProjectDir returns the current working directory (project directory)
 func GetProjectDir() string {
 	projectDirOnce.Do(func() {
 		cwd, err := os.Getwd()

@@ -2,80 +2,44 @@ package workspace
 
 import (
 	"path/filepath"
-	"strings"
-	"sync"
 
 	"github.com/ryanreadbooks/tokkibot/config"
 )
 
-// define allowed readable and writable directories in workspace
-var (
-	allowReadDirs = []string{
-		"memory",
-		"refs",
-		"medias",
-	}
-
-	allowWriteDirs = []string{
-		"memory",
-	}
-
-	readOnce           sync.Once
-	allowingReadPaths  = []string{}
-	writeOnce          sync.Once
-	allowingWritePaths = []string{}
-)
-
-func GetAllowedReadPaths() []string {
-	readOnce.Do(func() {
-		for _, allowDir := range allowReadDirs {
-			fullPath := filepath.Join(config.GetWorkspaceDir(), allowDir)
-			allowingReadPaths = append(allowingReadPaths, fullPath)
-		}
-	})
-	return allowingReadPaths
+// Shared dirs under homeDir (~/.tokkibot/)
+var sharedReadDirs = []string{
+	"refs",
+	"medias",
 }
 
-func GetAllowedWritePaths() []string {
-	writeOnce.Do(func() {
-		for _, allowDir := range allowWriteDirs {
-			fullPath := filepath.Join(config.GetWorkspaceDir(), allowDir)
-			allowingWritePaths = append(allowingWritePaths, fullPath)
-		}
-	})
-	return allowingWritePaths
+// Per-agent dirs under agentWorkspace (~/.tokkibot/workspace[-{name}]/)
+var agentReadDirs = []string{
+	"memory",
 }
 
-func IsAllowedReadPath(dir string) bool {
-	readOnce.Do(func() {
-		for _, allowDir := range allowReadDirs {
-			fullPath := filepath.Join(config.GetWorkspaceDir(), allowDir)
-			allowingReadPaths = append(allowingReadPaths, fullPath)
-		}
-	})
-
-	fullPath := filepath.Join(config.GetWorkspaceDir(), dir)
-	for _, allowingReadPath := range allowingReadPaths {
-		if strings.HasPrefix(fullPath, allowingReadPath) {
-			return true
-		}
-	}
-	return false
+var agentWriteDirs = []string{
+	"memory",
 }
 
-func IsAllowedWritePath(dir string) bool {
-	writeOnce.Do(func() {
-		for _, allowDir := range allowWriteDirs {
-			fullPath := filepath.Join(config.GetWorkspaceDir(), allowDir)
-			allowingWritePaths = append(allowingWritePaths, fullPath)
-		}
-	})
-
-	fullPath := filepath.Join(config.GetWorkspaceDir(), dir)
-	for _, allowingWritePath := range allowingWritePaths {
-		if strings.HasPrefix(fullPath, allowingWritePath) {
-			return true
-		}
+// GetAllowedReadPaths returns all allowed read paths for the given agent workspace.
+// Includes shared dirs (refs, medias) from homeDir and agent-specific dirs (memory) from agentWorkspace.
+func GetAllowedReadPaths(agentWorkspace string) []string {
+	home := config.GetHomeDir()
+	paths := make([]string, 0, len(sharedReadDirs)+len(agentReadDirs))
+	for _, dir := range sharedReadDirs {
+		paths = append(paths, filepath.Join(home, dir))
 	}
-	return false
+	for _, dir := range agentReadDirs {
+		paths = append(paths, filepath.Join(agentWorkspace, dir))
+	}
+	return paths
+}
+
+// GetAllowedWritePaths returns all allowed write paths for the given agent workspace.
+func GetAllowedWritePaths(agentWorkspace string) []string {
+	paths := make([]string, 0, len(agentWriteDirs))
+	for _, dir := range agentWriteDirs {
+		paths = append(paths, filepath.Join(agentWorkspace, dir))
+	}
+	return paths
 }

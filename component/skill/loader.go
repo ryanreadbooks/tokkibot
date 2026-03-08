@@ -14,105 +14,90 @@ import (
 
 var ErrSkillNotFound = fmt.Errorf("skill not found")
 
-type Loader struct {
-	sysMu        sync.RWMutex
-	systemSkills map[string]*Skill
+// skillScope represents which level a skill belongs to.
+// Higher scope overrides lower scope when names conflict.
+type skillScope int
 
-	projMu     sync.RWMutex
-	projSkills map[string]*Skill
+const (
+	scopeGlobal  skillScope = iota // ~/.tokkibot/skills (shared by all agents)
+	scopeAgent                     // ~/tokkibot/workspace[-{name}]/skills (per-agent)
+	scopeProject                   // ./.tokkibot/skills (per-project, highest priority)
+)
+
+type Loader struct {
+	mu     sync.RWMutex
+	skills map[skillScope]map[string]*Skill
 }
 
 func NewLoader() *Loader {
-	l := &Loader{
-		systemSkills: make(map[string]*Skill),
-		projSkills:   make(map[string]*Skill),
+	return &Loader{
+		skills: map[skillScope]map[string]*Skill{
+			scopeGlobal:  {},
+			scopeAgent:   {},
+			scopeProject: {},
+		},
 	}
-
-	return l
 }
 
-func (l *Loader) Init() error {
+// Init loads skills from three sources (low → high priority):
+//  1. Global: ~/.tokkibot/skills (shared by all agents)
+//  2. Agent:  agentWorkspace/skills (per-agent)
+//  3. Project: ./.tokkibot/skills (per-project)
+func (l *Loader) Init(agentWorkspace string) error {
+	globalSkillDir := filepath.Join(config.GetHomeDir(), "skills")
+	if err := l.collectSkills(globalSkillDir, scopeGlobal); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to collect global skills: %w", err)
+		}
+	}
+
+	agentSkillDir := filepath.Join(agentWorkspace, "skills")
+	if err := l.collectSkills(agentSkillDir, scopeAgent); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to collect agent skills: %w", err)
+		}
+	}
+
 	projSkillDir := filepath.Join(config.GetProjectDir(), ".tokkibot", "skills")
-	if err := l.collectSkills(projSkillDir, false); err != nil {
+	if err := l.collectSkills(projSkillDir, scopeProject); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to collect project skills: %w", err)
 		}
-		// do nothing
-	}
-
-	systemSkillDir := filepath.Join(config.GetWorkspaceDir(), "skills")
-	if err := l.collectSkills(systemSkillDir, true); err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to collect system skills: %w", err)
-		}
-		// do nothing
 	}
 
 	return nil
 }
 
-func (l *Loader) getSkill(name string, fromSystem bool) (*Skill, error) {
-	if fromSystem {
-		l.sysMu.RLock()
-		defer l.sysMu.RUnlock()
-		sysSkill, ok := l.systemSkills[name]
-		if ok {
-			return sysSkill, nil
+func (l *Loader) Get(name string) (*Skill, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	// search from highest priority to lowest
+	for _, scope := range []skillScope{scopeProject, scopeAgent, scopeGlobal} {
+		if s, ok := l.skills[scope][name]; ok {
+			return s, nil
 		}
-
-		return nil, ErrSkillNotFound
-	}
-
-	l.projMu.RLock()
-	defer l.projMu.RUnlock()
-	projSkill, ok := l.projSkills[name]
-	if ok {
-		return projSkill, nil
 	}
 
 	return nil, ErrSkillNotFound
 }
 
-func (l *Loader) addSkill(skill *Skill, toSystem bool) {
-	if toSystem {
-		l.sysMu.Lock()
-		defer l.sysMu.Unlock()
-		l.systemSkills[skill.Name()] = skill
-	} else {
-		l.projMu.Lock()
-		defer l.projMu.Unlock()
-		l.projSkills[skill.Name()] = skill
-	}
-}
-
-func (l *Loader) Get(name string) (*Skill, error) {
-	skill, err := l.getSkill(name, false)
-	if err == nil {
-		return skill, nil
-	}
-
-	skill, err = l.getSkill(name, true)
-	if err == nil {
-		return skill, nil
-	}
-
-	return nil, err
-}
-
-func (l *Loader) collectSkills(dir string, forSystem bool) error {
+func (l *Loader) collectSkills(dir string, scope skillScope) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() { // only directory is considered as skill directory
+		if entry.IsDir() {
 			skill, err := l.load(filepath.Join(dir, entry.Name()))
 			if err != nil {
 				continue
 			}
 
-			l.addSkill(skill, forSystem)
+			l.mu.Lock()
+			l.skills[scope][skill.Name()] = skill
+			l.mu.Unlock()
 		}
 	}
 
@@ -166,22 +151,19 @@ func (l *Loader) load(path string) (*Skill, error) {
 }
 
 func (l *Loader) Skills() []*Skill {
-	skills := make(map[string]*Skill, len(l.systemSkills)+len(l.projSkills))
-	// if project skill has to same name as system skill, system skill will be overwritten
-	l.sysMu.RLock()
-	defer l.sysMu.RUnlock()
-	for _, skill := range l.systemSkills {
-		skills[skill.Name()] = skill
-	}
-	l.projMu.RLock()
-	defer l.projMu.RUnlock()
-	for _, skill := range l.projSkills {
-		skills[skill.Name()] = skill
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	merged := make(map[string]*Skill)
+	// apply from lowest to highest priority so higher scopes overwrite
+	for _, scope := range []skillScope{scopeGlobal, scopeAgent, scopeProject} {
+		for _, s := range l.skills[scope] {
+			merged[s.Name()] = s
+		}
 	}
 
-	// sort the retain stability
-	result := xmap.Values(skills)
-	sort.Slice(result, func(i int, j int) bool {
+	result := xmap.Values(merged)
+	sort.Slice(result, func(i, j int) bool {
 		return result[i].Name() < result[j].Name()
 	})
 

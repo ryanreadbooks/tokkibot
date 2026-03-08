@@ -9,6 +9,7 @@ import (
 	cliadapter "github.com/ryanreadbooks/tokkibot/channel/adapter/cli"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/cmd/agent/ui/tui"
+	cfg "github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/gateway"
 
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ import (
 var (
 	agentChatId         string
 	resumeSessionChatId string
+	agentName           string
 
 	oneTimeQuestion string
 )
@@ -63,6 +65,7 @@ var AgentSystemPromptCmd = &cobra.Command{
 }
 
 func init() {
+	AgentCmd.PersistentFlags().StringVar(&agentName, "agent", cfg.MainAgentName, "Agent name to use")
 	AgentCmd.Flags().StringVar(&resumeSessionChatId, "resume", "", "To resume a existing session, provide the session id.")
 	AgentCmd.Flags().StringVar(&oneTimeQuestion, "message", "", "To ask a one-time question, provide the message.")
 
@@ -73,7 +76,7 @@ func init() {
 }
 
 func runAgentOnce(ctx context.Context, message string) error {
-	gw, err := gateway.NewGateway(ctx)
+	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
 	if err != nil {
 		return fmt.Errorf("failed to create gateway: %w", err)
 	}
@@ -81,7 +84,7 @@ func runAgentOnce(ctx context.Context, message string) error {
 	cliAdapter := cliadapter.NewAdapter(cliadapter.CLIConfig{
 		ChatID: "one-time",
 	})
-	gw.AddAdapter(cliAdapter)
+	gw.AddAdapter(cliAdapter, agentName)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -90,15 +93,15 @@ func runAgentOnce(ctx context.Context, message string) error {
 		_ = gw.Run(ctx)
 	}()
 
-	if err := gw.GetAgent().InitSession(chmodel.CLI.String(), "one-time"); err != nil {
+	if err := gw.GetAgent(agentName).InitSession(chmodel.CLI.String(), "one-time"); err != nil {
 		return err
 	}
 
-	return tui.RunWithSpinner(ctx, gw.GetAgent(), cliAdapter, message)
+	return tui.RunWithSpinner(ctx, gw.GetAgent(agentName), cliAdapter, message)
 }
 
 func runAgent(ctx context.Context) error {
-	gw, err := gateway.NewGateway(ctx)
+	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
 	if err != nil {
 		return fmt.Errorf("failed to create gateway: %w", err)
 	}
@@ -112,7 +115,7 @@ func runAgent(ctx context.Context) error {
 	cliAdapter := cliadapter.NewAdapter(cliadapter.CLIConfig{
 		ChatID: agentChatId,
 	})
-	gw.AddAdapter(cliAdapter)
+	gw.AddAdapter(cliAdapter, agentName)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -121,7 +124,7 @@ func runAgent(ctx context.Context) error {
 		_ = gw.Run(ctx)
 	}()
 
-	if err := tui.Run(ctx, gw.GetAgent(), cliAdapter); err != nil {
+	if err := tui.Run(ctx, gw.GetAgent(agentName), cliAdapter); err != nil {
 		return err
 	}
 
@@ -131,7 +134,7 @@ func runAgent(ctx context.Context) error {
 }
 
 func runAgentListSkills(ctx context.Context) error {
-	ag, err := agent.Prepare(ctx)
+	ag, err := agent.Prepare(ctx, agentName)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}
@@ -152,7 +155,7 @@ func runAgentListSkills(ctx context.Context) error {
 }
 
 func runAgentSystemPrompt(ctx context.Context) error {
-	ag, err := agent.Prepare(ctx)
+	ag, err := agent.Prepare(ctx, agentName)
 	if err != nil {
 		return fmt.Errorf("failed to prepare agent: %w", err)
 	}

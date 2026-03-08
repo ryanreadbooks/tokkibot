@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
-	"github.com/ryanreadbooks/tokkibot/config"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
@@ -33,9 +32,8 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		ChatId:  userMsg.ChatId,
 	}
 
-	agentCfg := config.GetAgentConfig()
 	var lastResponse *schema.Response
-	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
+	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
 			return formatCancelledError(ctx)
@@ -121,13 +119,12 @@ func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMe
 		return
 	}
 
-	agentCfg := config.GetAgentConfig()
 	toolMeta := tool.InvokeMeta{
 		Channel: userMsg.Channel,
 		ChatId:  userMsg.ChatId,
 	}
 mainLoop:
-	for curIter := 1; curIter <= agentCfg.MaxIteration; curIter++ {
+	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
 			emitter.EmitContent(curIter, formatCancelledError(ctx), "")

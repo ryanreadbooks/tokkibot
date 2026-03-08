@@ -11,10 +11,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var agentName string
+
 var OnboardCmd = &cobra.Command{
 	Use:   "onboard",
 	Short: "Initialize tokkibot configuration.",
-	Long:  "Initialize tokkibot configuration.",
+	Long:  "Initialize tokkibot configuration and agent workspace.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := runOnboard(args)
 		if err != nil {
@@ -23,6 +25,10 @@ var OnboardCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func init() {
+	OnboardCmd.Flags().StringVar(&agentName, "agent", config.MainAgentName, "Agent name to onboard")
 }
 
 func bootstrapConfig(configPath string) error {
@@ -59,23 +65,30 @@ func bootstrapConfig(configPath string) error {
 }
 
 func bootstrapPrompts(workspaceDir string) error {
-	// prompts file init
-	targetPromptPath := filepath.Join(workspaceDir, "prompts")
-	if _, err := os.Stat(targetPromptPath); os.IsNotExist(err) {
-		err = os.MkdirAll(targetPromptPath, 0755)
-		if err != nil {
-			return fmt.Errorf("failed to create prompts directory at %s: %w", targetPromptPath, err)
+	if _, err := os.Stat(workspaceDir); os.IsNotExist(err) {
+		if err = os.MkdirAll(workspaceDir, 0755); err != nil {
+			return fmt.Errorf("failed to create workspace directory at %s: %w", workspaceDir, err)
 		}
 	}
-	// first check prompt folder exists and not empty
-	targetPromptDir, err := os.ReadDir(targetPromptPath)
+
+	// check if any prompt files already exist
+	hasExisting := false
+	promptFiles, err := workspace.PromptsFs.ReadDir("prompts")
 	if err != nil {
-		return fmt.Errorf("failed to read prompt directory at %s: %w", targetPromptPath, err)
+		return fmt.Errorf("failed to read embedded prompt files: %w", err)
+	}
+	for _, pf := range promptFiles {
+		if !pf.IsDir() {
+			if _, err := os.Stat(filepath.Join(workspaceDir, pf.Name())); err == nil {
+				hasExisting = true
+				break
+			}
+		}
 	}
 
 	doInit := true
-	if len(targetPromptDir) > 0 {
-		fmt.Printf("Prompt files already exist at %s, do you want to overwrite them? (y/n): ", targetPromptPath)
+	if hasExisting {
+		fmt.Printf("Prompt files already exist at %s, do you want to overwrite them? (y/n): ", workspaceDir)
 		var overwrite string
 		fmt.Scanln(&overwrite)
 		if overwrite != "y" && overwrite != "Y" {
@@ -87,30 +100,24 @@ func bootstrapPrompts(workspaceDir string) error {
 		return nil
 	}
 
-	promptFiles, err := workspace.PromptsFs.ReadDir("prompts")
-	if err != nil {
-		return fmt.Errorf("failed to read prompt files: %w", err)
-	}
-
 	for _, promptFile := range promptFiles {
 		if promptFile.IsDir() {
 			continue
 		}
 
-		// file
-		filePath := filepath.Join("prompts", promptFile.Name())
-		content, err := workspace.PromptsFs.ReadFile(filePath)
+		embeddedPath := filepath.Join("prompts", promptFile.Name())
+		content, err := workspace.PromptsFs.ReadFile(embeddedPath)
 		if err != nil {
-			return fmt.Errorf("failed to read prompt file %s: %w", filePath, err)
+			return fmt.Errorf("failed to read prompt file %s: %w", embeddedPath, err)
 		}
 
-		err = os.WriteFile(filepath.Join(targetPromptPath, promptFile.Name()), content, 0644)
+		err = os.WriteFile(filepath.Join(workspaceDir, promptFile.Name()), content, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to write prompt file %s: %w", filePath, err)
+			return fmt.Errorf("failed to write prompt file %s: %w", promptFile.Name(), err)
 		}
 	}
 
-	fmt.Printf("Prompt files written to %s\n", targetPromptPath)
+	fmt.Printf("Prompt files written to %s\n", workspaceDir)
 
 	return nil
 }
@@ -171,28 +178,32 @@ func bootstrapMemory(workspaceDir string) error {
 }
 
 func runOnboard(_ []string) error {
-	configPath, err := config.GetWorkspaceConfigPath()
-	if err != nil {
-		return fmt.Errorf("failed to get config path: %w", err)
-	}
-
-	workspaceDir := filepath.Dir(configPath)
-	if _, err := os.Stat(workspaceDir); os.IsNotExist(err) {
-		err = os.MkdirAll(workspaceDir, 0755)
-		if err != nil {
-			return fmt.Errorf("failed to create config directory at %s: %w", workspaceDir, err)
+	homeDir := config.GetHomeDir()
+	if _, err := os.Stat(homeDir); os.IsNotExist(err) {
+		if err = os.MkdirAll(homeDir, 0755); err != nil {
+			return fmt.Errorf("failed to create home directory at %s: %w", homeDir, err)
 		}
 	}
 
-	if err := bootstrapConfig(configPath); err != nil {
-		return fmt.Errorf("failed to bootstrap config: %w", err)
+	// only bootstrap global config for main agent
+	if agentName == config.MainAgentName {
+		configPath, err := config.GetWorkspaceConfigPath()
+		if err != nil {
+			return fmt.Errorf("failed to get config path: %w", err)
+		}
+		if err := bootstrapConfig(configPath); err != nil {
+			return fmt.Errorf("failed to bootstrap config: %w", err)
+		}
 	}
 
-	if err := bootstrapPrompts(workspaceDir); err != nil {
+	agentWorkspace := config.GetAgentWorkspaceDir(agentName)
+	fmt.Printf("Initializing agent %s workspace at %s\n", agentName, agentWorkspace)
+
+	if err := bootstrapPrompts(agentWorkspace); err != nil {
 		return fmt.Errorf("failed to bootstrap prompts: %w", err)
 	}
 
-	if err := bootstrapMemory(workspaceDir); err != nil {
+	if err := bootstrapMemory(agentWorkspace); err != nil {
 		return fmt.Errorf("failed to bootstrap memory: %w", err)
 	}
 

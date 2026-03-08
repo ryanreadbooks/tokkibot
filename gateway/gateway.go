@@ -12,12 +12,14 @@ import (
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/cron"
 )
 
 type gatewayOption struct {
 	runCronTasks bool
 	verbose      bool
+	agentNames   []string // agent names to initialize
 }
 
 type GatewayOption func(*gatewayOption)
@@ -34,12 +36,22 @@ func WithVerbose(verbose bool) GatewayOption {
 	}
 }
 
+// WithAgentNames specifies which agents to initialize.
+// Defaults to ["main"] if not set.
+func WithAgentNames(names []string) GatewayOption {
+	return func(o *gatewayOption) {
+		o.agentNames = names
+	}
+}
+
 type Gateway struct {
-	agent    *agent.Agent
+	agents   map[string]*agent.Agent
 	wg       sync.WaitGroup
 	adapters map[chmodel.Type]chadapter.Adapter
-	poolMu   sync.Mutex
-	pools    map[string]*ants.Pool
+	// adapter -> agentName mapping
+	adapterAgent map[chmodel.Type]string
+	poolMu       sync.Mutex
+	pools        map[string]*ants.Pool
 
 	// running tasks cancel functions, key: "channel:chatId"
 	runningMu sync.RWMutex
@@ -53,31 +65,52 @@ type Gateway struct {
 }
 
 func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
-	ag, err := agent.Prepare(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare agent: %w", err)
-	}
-
 	option := &gatewayOption{}
 	for _, opt := range opts {
 		opt(option)
 	}
 
-	pools := make(map[string]*ants.Pool)
-	gateway := &Gateway{
-		agent:    ag,
-		pools:    pools,
-		adapters: make(map[chmodel.Type]chadapter.Adapter),
-		running:  make(map[string]context.CancelFunc),
-		cronMgr:  cron.GetGlobalManager(),
-		verbose:  option.verbose,
-		option:   option,
+	if len(option.agentNames) == 0 {
+		// read all agent ids from config
+		for _, entry := range config.GetConfig().Agents {
+			option.agentNames = append(option.agentNames, entry.Id)
+		}
+	}
+	if len(option.agentNames) == 0 {
+		option.agentNames = []string{config.MainAgentName}
 	}
 
-	// set cron task handler
+	agents := make(map[string]*agent.Agent, len(option.agentNames))
+	for _, name := range option.agentNames {
+		ag, err := agent.Prepare(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare agent %s: %w", name, err)
+		}
+		agents[name] = ag
+	}
+
+	// prepare __crons agent (uses main's workspace, isolated sessions)
+	cronsAg, err := agent.Prepare(ctx, config.CronsAgentName,
+		agent.WithWorkspaceOverride(config.GetAgentWorkspaceDir(config.MainAgentName)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare crons agent: %w", err)
+	}
+	agents[config.CronsAgentName] = cronsAg
+
+	gateway := &Gateway{
+		agents:       agents,
+		pools:        make(map[string]*ants.Pool),
+		adapters:     make(map[chmodel.Type]chadapter.Adapter),
+		adapterAgent: make(map[chmodel.Type]string),
+		running:      make(map[string]context.CancelFunc),
+		cronMgr:      cron.GetGlobalManager(),
+		verbose:      option.verbose,
+		option:       option,
+	}
+
 	gateway.cronMgr.SetHandler(gateway.handleCronTask)
 
-	// load cron tasks
 	if err := gateway.cronMgr.Load(); err != nil {
 		slog.Warn("failed to load cron tasks", "error", err)
 	}
@@ -85,12 +118,33 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	return gateway, nil
 }
 
-func (g *Gateway) GetAgent() *agent.Agent {
-	return g.agent
+// GetAgent returns the agent for the given name. Returns main agent if name is empty.
+func (g *Gateway) GetAgent(name ...string) *agent.Agent {
+	agentName := config.MainAgentName
+	if len(name) > 0 && name[0] != "" {
+		agentName = name[0]
+	}
+	return g.agents[agentName]
 }
 
-func (g *Gateway) AddAdapter(adapter chadapter.Adapter) {
+// agentForAdapter returns the agent bound to the given adapter channel type.
+func (g *Gateway) agentForAdapter(channel chmodel.Type) *agent.Agent {
+	agentName, ok := g.adapterAgent[channel]
+	if !ok {
+		agentName = config.MainAgentName
+	}
+	return g.agents[agentName]
+}
+
+// AddAdapter registers an adapter with an optional agent name binding.
+// If agentName is empty, defaults to "main".
+func (g *Gateway) AddAdapter(adapter chadapter.Adapter, agentName ...string) {
 	g.adapters[adapter.Type()] = adapter
+	name := config.MainAgentName
+	if len(agentName) > 0 && agentName[0] != "" {
+		name = agentName[0]
+	}
+	g.adapterAgent[adapter.Type()] = name
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
@@ -190,13 +244,12 @@ func (g *Gateway) workerDo(
 	userMessage *agent.UserMessage,
 	adapter chadapter.Adapter,
 ) {
-	// Inject ToolConfirmer into context
 	confirmHandler := NewConfirmHandler(rawMsg)
 	ctx = tool.WithConfirmer(ctx, confirmHandler)
 
-	result := g.agent.Ask(ctx, userMessage)
+	ag := g.agentForAdapter(adapter.Type())
+	result := ag.Ask(ctx, userMessage)
 
-	// send result back to adapter
 	select {
 	case adapter.SendChan() <- &chmodel.OutgoingMessage{
 		ReceiverId: rawMsg.SenderId,
@@ -213,14 +266,14 @@ func (g *Gateway) workerDoStream(
 	ctx context.Context,
 	rawMsg *chmodel.IncomingMessage,
 	userMessage *agent.UserMessage,
-	_ chadapter.Adapter,
+	adapter chadapter.Adapter,
 ) {
-	// Inject ToolConfirmer into context
 	confirmHandler := NewConfirmHandler(rawMsg)
 	ctx = tool.WithConfirmer(ctx, confirmHandler)
 
+	ag := g.agentForAdapter(adapter.Type())
 	emitter := &msgEmitter{msg: rawMsg}
-	g.agent.AskStream(ctx, userMessage, emitter)
+	ag.AskStream(ctx, userMessage, emitter)
 }
 
 // msgEmitter adapts IncomingMessage to agent.StreamEmitter
@@ -248,11 +301,10 @@ func (e *msgEmitter) EmitDone() {
 	e.msg.EmitDone()
 }
 
-// handleCronTask handles a triggered cron task
+// handleCronTask handles a triggered cron task using the __crons virtual agent
 func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 	chatId := task.ChatId()
 
-	// construct user message from cron task (use "cron" as channel for all cron tasks)
 	userMessage := &agent.UserMessage{
 		Channel: "cron",
 		ChatId:  chatId,
@@ -260,8 +312,8 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 		Created: time.Now().Unix(),
 	}
 
-	// execute the agent
-	result := g.agent.Ask(ctx, userMessage)
+	cronsAgent := g.agents[config.CronsAgentName]
+	result := cronsAgent.Ask(ctx, userMessage)
 	slog.Info("cron task executed", "name", task.Name)
 
 	// deliver result if configured

@@ -30,13 +30,15 @@ type promptBuiltinInfo struct {
 }
 
 var systemPromptList = []string{
-	"prompts/AGENTS.md",
-	"prompts/IDENTITY.md",
-	"prompts/TOOLS.md",
+	"AGENTS.md",
+	"IDENTITY.md",
+	"TOOLS.md",
 }
 
 // context management for the agent
 type ContextManager struct {
+	agentWorkspace string // agent's workspace dir for prompts and memory
+
 	systemPromptsTemplate string // raw template, not rendered
 	systemPromptsCache    string // rendered cache for display
 	systemPromptsMu       sync.RWMutex
@@ -50,7 +52,8 @@ type ContextManager struct {
 }
 
 type ContextManagerConfig struct {
-	Workspace string
+	AgentName      string // for session isolation
+	AgentWorkspace string // for prompts and memory
 }
 
 func NewContextManager(
@@ -59,14 +62,15 @@ func NewContextManager(
 	skillLoader *skill.Loader,
 ) (*ContextManager, error) {
 	sessionCfg := session.LogManagerConfig{
-		Workspace: filepath.Join(c.Workspace, "sessions"),
+		Workspace: config.GetAgentSessionsDir(c.AgentName),
 	}
 	aofLogMgr := session.NewAOFLogManager(ctx, sessionCfg)
 	contextLogMgr := session.NewContextLogManager(ctx, sessionCfg)
 	memoryMgr := NewMemoryManager(MemoryManagerConfig{
-		Workspace: c.Workspace,
+		Workspace: c.AgentWorkspace,
 	})
 	mgr := &ContextManager{
+		agentWorkspace:    c.AgentWorkspace,
 		aofLogManager:     aofLogMgr,
 		contextLogManager: contextLogMgr,
 		memoryMgr:         memoryMgr,
@@ -94,7 +98,7 @@ func (c *ContextManager) renderPrompts(s string) string {
 
 	builtinInfo := promptBuiltinInfo{
 		Cwd:             config.GetProjectDir(),
-		Workspace:       config.GetWorkspaceDir(),
+		Workspace:       c.agentWorkspace,
 		Now:             nowWithWeekday,
 		Runtime:         runtime.GOOS,
 		AvailableSkills: skill.SkillsAsPrompt(c.skillLoader.Skills()),
@@ -124,9 +128,9 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	prompts := strings.Builder{}
 	prompts.Grow(1024 * len(systemPromptList))
 
-	// system built-in prompts
+	// system built-in prompts from agent workspace
 	for _, promptPath := range systemPromptList {
-		promptPath = filepath.Join(config.GetWorkspaceDir(), promptPath)
+		promptPath = filepath.Join(c.agentWorkspace, promptPath)
 		content, err := os.ReadFile(promptPath)
 		if err != nil {
 			return err

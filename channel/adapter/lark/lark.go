@@ -38,8 +38,8 @@ type LarkAdapter struct {
 }
 
 type LarkConfig struct {
-	AppId     string
-	AppSecret string
+	AppId     string `json:"appId"`
+	AppSecret string `json:"appSecret"`
 }
 
 func NewAdapter(cfg LarkConfig) *LarkAdapter {

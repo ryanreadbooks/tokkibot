@@ -17,6 +17,7 @@ const (
 	defaultCompactThresholdPercentage   = 0.70
 	defaultSummarizeThresholdPercentage = 0.60
 	defaultToolCallCompressThreshold    = 30
+	defaultMaxIteration                 = 30
 )
 
 type ProviderConfig struct {
@@ -32,16 +33,32 @@ type ProviderConfig struct {
 	ToolCallCompressThreshold    int     `json:"toolCallCompressThreshold,omitempty"`
 }
 
-type AgentConfig struct {
-	MaxIteration int `json:"maxIteration"`
+type AgentBindingMatch struct {
+	Channel string `json:"channel"`
+	Account string `json:"account"`
 }
 
-// The configuration for the tokkibot.
+type AgentBinding struct {
+	Match AgentBindingMatch `json:"match"`
+}
+
+type AgentEntry struct {
+	Id           string        `json:"id"`
+	MaxIteration int           `json:"maxIteration"`
+	Provider     string        `json:"provider"`
+	Model        string        `json:"model,omitempty"`
+	Binding      *AgentBinding `json:"binding,omitempty"`
+}
+
+type ChannelEntry struct {
+	Name    string                         `json:"name"`
+	Account map[string]json.RawMessage     `json:"account"`
+}
+
 type Config struct {
-	DefaultProvider string                    `json:"defaultProvider"`
-	Providers       map[string]ProviderConfig `json:"providers"`
-	Adapters        AdapterConfig             `json:"adapters"`
-	Agent           AgentConfig               `json:"agent"`
+	Providers map[string]ProviderConfig `json:"providers"`
+	Agents    []AgentEntry              `json:"agents"`
+	Channels  []ChannelEntry            `json:"channels"`
 }
 
 func (c *Config) ToJson() ([]byte, error) {
@@ -50,7 +67,6 @@ func (c *Config) ToJson() ([]byte, error) {
 
 func BootstrapConfig() Config {
 	return Config{
-		DefaultProvider: "moonshot",
 		Providers: map[string]ProviderConfig{
 			"openai": {
 				ApiKey:       os.Getenv("OPENAI_API_KEY"),
@@ -63,19 +79,31 @@ func BootstrapConfig() Config {
 				DefaultModel: "kimi-k2.5",
 			},
 		},
-		Adapters: AdapterConfig{
-			Lark: LarkAdapterConfig{
-				AppId:     "",
-				AppSecret: "",
+		Agents: []AgentEntry{
+			{
+				Id:           MainAgentName,
+				MaxIteration: defaultMaxIteration,
+				Provider:     "moonshot",
+				Model:        "kimi-k2.5",
+				Binding: &AgentBinding{
+					Match: AgentBindingMatch{
+						Channel: "lark",
+						Account: "default",
+					},
+				},
 			},
 		},
-		Agent: AgentConfig{
-			MaxIteration: 30,
+		Channels: []ChannelEntry{
+			{
+				Name: "lark",
+				Account: map[string]json.RawMessage{
+					"default": json.RawMessage(`{"appId": "", "appSecret": ""}`),
+				},
+			},
 		},
 	}
 }
 
-// applyProviderDefaults applies default values to provider config if not set
 func (pc *ProviderConfig) applyDefaults() {
 	if pc.EnableThinking == nil {
 		enableThinking := defaultEnableThinking
@@ -101,6 +129,17 @@ func (pc *ProviderConfig) applyDefaults() {
 	}
 }
 
+func (ae *AgentEntry) applyDefaults(providers map[string]ProviderConfig) {
+	if ae.MaxIteration == 0 {
+		ae.MaxIteration = defaultMaxIteration
+	}
+	if ae.Model == "" {
+		if p, ok := providers[ae.Provider]; ok {
+			ae.Model = p.DefaultModel
+		}
+	}
+}
+
 func LoadConfig() (c Config, err error) {
 	c = BootstrapConfig()
 	configPath, err := GetWorkspaceConfigPath()
@@ -121,10 +160,13 @@ func LoadConfig() (c Config, err error) {
 		return
 	}
 
-	// Apply defaults to all providers
 	for name, providerCfg := range c.Providers {
 		providerCfg.applyDefaults()
 		c.Providers[name] = providerCfg
+	}
+
+	for i := range c.Agents {
+		c.Agents[i].applyDefaults(c.Providers)
 	}
 
 	return
@@ -134,8 +176,36 @@ func GetConfig() Config {
 	return conf
 }
 
-func GetAgentConfig() AgentConfig {
-	return conf.Agent
+// GetAgentEntry returns the agent entry for the given agent id.
+// Returns nil if not found.
+func GetAgentEntry(agentId string) *AgentEntry {
+	for i := range conf.Agents {
+		if conf.Agents[i].Id == agentId {
+			return &conf.Agents[i]
+		}
+	}
+	return nil
+}
+
+// GetChannelEntry returns the channel entry for the given channel name.
+// Returns nil if not found.
+func GetChannelEntry(channelName string) *ChannelEntry {
+	for i := range conf.Channels {
+		if conf.Channels[i].Name == channelName {
+			return &conf.Channels[i]
+		}
+	}
+	return nil
+}
+
+// GetChannelAccountRaw returns raw JSON config for a channel account.
+func GetChannelAccountRaw(channelName, accountName string) (json.RawMessage, bool) {
+	ch := GetChannelEntry(channelName)
+	if ch == nil {
+		return nil, false
+	}
+	raw, ok := ch.Account[accountName]
+	return raw, ok
 }
 
 // IsThinkingEnabled returns whether thinking is enabled for this provider
@@ -146,12 +216,10 @@ func (pc ProviderConfig) IsThinkingEnabled() bool {
 	return *pc.EnableThinking
 }
 
-// GetContextCompactThreshold returns the calculated compact threshold
 func (pc ProviderConfig) GetContextCompactThreshold() int64 {
 	return int64(float64(pc.WindowLimit) * pc.CompactThresholdPercentage)
 }
 
-// GetContextSummarizeThreshold returns the calculated summarize threshold
 func (pc ProviderConfig) GetContextSummarizeThreshold() int64 {
 	return int64(float64(pc.WindowLimit) * pc.SummarizeThresholdPercentage)
 }

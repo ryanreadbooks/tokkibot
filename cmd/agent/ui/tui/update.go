@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -114,6 +115,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// Handle normal key presses
 	switch msg.Type {
 	case tea.KeyCtrlC:
+		if m.processing && m.cancelFn != nil {
+			m.cancelFn()
+			return m, nil
+		}
 		return m, tea.Quit
 
 	case tea.KeyEnter:
@@ -129,6 +134,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 		// Set processing state
 		m.processing = true
+		reqCtx, cancelFn := context.WithCancel(m.ctx)
+		m.cancelFn = cancelFn
 
 		// Add user message
 		m.chat.AddMessage(types.Message{
@@ -144,7 +151,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 		})
 
 		// Send to agent via handler
-		stream := m.handler.SendMessage(m.ctx, userInput)
+		stream := m.handler.SendMessage(reqCtx, userInput)
 
 		// Capture program reference for goroutines
 		program := m.program
@@ -244,6 +251,7 @@ func (m Model) handleToolCall(msg ToolCallMsg) Model {
 func (m Model) handleClearRound(msg ClearRoundMsg) (Model, tea.Cmd) {
 	m.curRound = int(msg)
 	m.processing = false
+	m.cancelFn = nil
 
 	// Return a command to update tokens (instead of calling Send directly)
 	return m, func() tea.Msg {
