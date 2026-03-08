@@ -269,9 +269,10 @@ func (m *McpToolManager) listMcpStdioServerTools(ctx context.Context, serverName
 	tools := make([]*McpTool, 0, len(response.Tools))
 	for _, tool := range response.Tools {
 		tools = append(tools, &McpTool{
-			sc:     server,
-			raw:    tool,
-			client: cli,
+			serverName: serverName,
+			sc:         server,
+			raw:        tool,
+			client:     cli,
 		})
 	}
 

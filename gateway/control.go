@@ -3,11 +3,9 @@ package gateway
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
-	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
 )
 
 // ControlCommand represents a control command from user
@@ -236,7 +234,7 @@ func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
 		}
 		fmt.Fprintf(&sb, "| %s | %s | %s |\n", s.Name, status, tools)
 	}
-	fmt.Fprintf(&sb, "Use `/mcp info <server>` to see tools")
+	fmt.Fprintf(&sb, "\nUse `/mcp info <server>` to see tools")
 	g.sendResponse(rawMsg, sb.String())
 }
 
@@ -286,12 +284,7 @@ func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName stri
 	fmt.Fprintf(&sb, "\n**Tools (%d):**\n", len(serverTools))
 	for _, t := range serverTools {
 		info := t.Info()
-		desc := info.Description
-		truncated := xstring.Truncate(desc, 56)
-		if utf8.RuneCountInString(desc) > utf8.RuneCountInString(truncated) {
-			truncated += "..."
-		}
-		fmt.Fprintf(&sb, "- **%s** - %s\n", t.ToolName(), truncated)
+		fmt.Fprintf(&sb, "- **%s** - %s\n", t.ToolName(), info.Description)
 	}
 	g.sendResponse(rawMsg, sb.String())
 }
