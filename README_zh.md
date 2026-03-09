@@ -35,23 +35,38 @@ tokkibot onboard
 
 ```json
 {
-  "defaultProvider": "openai",
   "providers": {
     "openai": {
       "apiKey": "${OPENAI_API_KEY}",
       "baseURL": "https://api.openai.com/v1",
       "defaultModel": "gpt-4o-mini"
+    },
+    "deepseek": {
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "baseURL": "https://api.deepseek.com/v1",
+      "defaultModel": "deepseek-reasoner",
+      "enableThinking": true
     }
   },
-  "adapters": {
-    "lark": {
-      "appId": "your-app-id",
-      "appSecret": "your-app-secret"
+  "agents": [
+    {
+      "id": "main",
+      "maxIteration": 30,
+      "provider": "openai",
+      "model": "gpt-4o",
+      "binding": {
+        "match": { "channel": "lark", "account": "default" }
+      }
     }
-  },
-  "agent": {
-    "maxIteration": 30
-  }
+  ],
+  "channels": [
+    {
+      "name": "lark",
+      "account": {
+        "default": { "appId": "your-app-id", "appSecret": "your-app-secret" }
+      }
+    }
+  ]
 }
 ```
 
@@ -79,10 +94,17 @@ tokkibot gateway
 启动后，机器人会监听飞书消息并自动回复。
 
 **控制命令：**
-- `/stop` - 停止当前任务
-- `/new` - 开始新会话
-- `/compact` - 压缩上下文
-- `/help` - 显示帮助
+
+| 命令 | 描述 |
+|------|------|
+| `/stop` | 停止当前任务 |
+| `/new` | 开始新会话 |
+| `/compact` | 压缩上下文 |
+| `/skill list` | 列出所有可用技能 |
+| `/skill info <name>` | 显示技能详情 |
+| `/mcp list` | 列出所有 MCP 服务器和状态 |
+| `/mcp info <server>` | 显示服务器工具 |
+| `/help` | 显示帮助 |
 
 ### 定时任务
 
@@ -116,29 +138,67 @@ tokkibot cron disable daily-report
 tokkibot cron delete daily-report
 ```
 
-## 工作区
+### 技能
 
-默认工作区位于 `~/.tokkibot/`：
+技能通过领域知识和工具扩展 Agent 能力。使用 [clawhub](https://github.com/openclaw/clawhub) 安装技能：
 
+```bash
+# 安装技能
+clawhub install tavily-search --dir ~/.tokkibot/skills
+
+# 安装指定版本
+clawhub install tavily-search@1.0.0 --dir ~/.tokkibot/skills
 ```
-~/.tokkibot/
-├── config.json      # 配置文件
-├── mcp.json         # MCP 服务器配置（可选）
-├── prompts/         # 系统提示词（可自定义）
-├── memory/          # 长期记忆
-│   └── LONG-TERM.md
-├── crons/           # 定时任务
-│   └── <task-name>/
-│       ├── meta.json
-│       └── prompt.md
-└── refs/            # 引用内容
+
+技能在启动时自动从 `~/.tokkibot/skills/` 加载。每个技能包含：
+- `SKILL.md` - 技能定义和使用说明
+- 其他资源（提示词、模板等）
+
+### MCP（模型上下文协议）
+
+Tokkibot 支持 MCP 服务器以扩展工具能力。在 `~/.tokkibot/mcp.json` 中配置：
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropics/mcp-filesystem", "/path/to/allowed/dir"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropics/mcp-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "remote-server": {
+      "url": "http://localhost:8080/sse",
+      "headers": {
+        "Authorization": "Bearer ${API_TOKEN}"
+      }
+    }
+  }
+}
 ```
+
+**配置字段（命令模式）：**
+- `command` - 启动 MCP 服务器的可执行命令
+- `args` - 命令行参数
+- `env` - 环境变量（支持 `${VAR}` 语法展开）
+
+**配置字段（URL 模式）：**
+- `url` - 远程 MCP 服务器的 SSE 端点 URL
+- `headers` - HTTP 请求头（支持 `${VAR}` 语法展开）
+
+MCP 服务器会自动启动，其工具对 Agent 可用。
 
 ## 环境变量
 
 | 变量 | 描述 |
 |------|------|
 | `OPENAI_API_KEY` | OpenAI API Key |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key |
 | `MOONSHOT_API_KEY` | Moonshot API Key |
 
 ## License

@@ -10,28 +10,9 @@ import (
 	"strings"
 
 	"github.com/ryanreadbooks/tokkibot/agent/ref"
+	"github.com/ryanreadbooks/tokkibot/agent/tools/guard"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
-	"github.com/ryanreadbooks/tokkibot/config"
 )
-
-func resolvePath(path string, allowDirs []string) (string, error) {
-	if filepath.IsAbs(path) {
-		cleanPath := filepath.Clean(path)
-		if len(allowDirs) > 0 {
-			for _, allowDir := range allowDirs {
-				if strings.HasPrefix(cleanPath, allowDir) {
-					return cleanPath, nil
-				}
-			}
-			return "", fmt.Errorf("Path %s is outside of allowed directories %v", path, allowDirs)
-		}
-
-		return cleanPath, nil
-	}
-
-	// relative path
-	return filepath.Join(config.GetProjectDir(), filepath.Clean(path)), nil
-}
 
 type ReadFileInput struct {
 	Path   string `json:"path"             jsonschema:"description=The path to the file read from"`
@@ -50,7 +31,7 @@ func ReadFile(allowDirs []string) tool.Invoker {
 			"by specifying line offset and limit for large files. ",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *ReadFileInput) (content string, err error) {
 		// now we can read the file
-		cleanPath, err := resolvePath(input.Path, allowDirs)
+		cleanPath, err := guard.ResolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
 		}
@@ -103,9 +84,13 @@ func WriteFile(allowDirs []string) tool.Invoker {
 		Name:        ToolNameWriteFile,
 		Description: "Write content to a file at the given path. Creates parent directories if necessary.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *WriteFileInput) (result string, err error) {
-		cleanPath, err := resolvePath(input.Path, allowDirs)
+		cleanPath, err := guard.ResolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
+		}
+
+		if guard.IsPathWriteProtected(cleanPath) {
+			return "", fmt.Errorf("path %s is write protected", cleanPath)
 		}
 
 		err = os.MkdirAll(filepath.Dir(cleanPath), 0755)
@@ -132,7 +117,7 @@ func ListDir(allowDirs []string) tool.Invoker {
 		Name:        ToolNameListDir,
 		Description: "List the contents of a directory.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *ListDirInput) (result string, err error) {
-		cleanPath, err := resolvePath(input.Path, allowDirs)
+		cleanPath, err := guard.ResolvePath(input.Path, allowDirs)
 		if err != nil {
 			return "", err
 		}
@@ -172,9 +157,13 @@ func EditFile(allowDirs []string) tool.Invoker {
 		Name:        ToolNameEditFile,
 		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *EditFileInput) (result string, err error) {
-		cleanPath, err := resolvePath(input.FileName, allowDirs)
+		cleanPath, err := guard.ResolvePath(input.FileName, allowDirs)
 		if err != nil {
 			return "", err
+		}
+
+		if guard.IsPathWriteProtected(cleanPath) {
+			return "", fmt.Errorf("path %s is write protected", cleanPath)
 		}
 
 		f, err := os.OpenFile(cleanPath, os.O_RDWR, 0664)

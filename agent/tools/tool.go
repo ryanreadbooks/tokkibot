@@ -10,9 +10,7 @@ const (
 	ToolNameLoadRef      = "load_ref"
 	ToolNameShell        = "shell"
 	ToolNameWebFetch     = "web_fetch"
-	ToolNameScheduleCron = "schedule_cron"
-	ToolNameListCron     = "list_cron"
-	ToolNameDeleteCron   = "delete_cron"
+	ToolNameCron         = "cron"
 	ToolNameTodoWrite    = "todo_write"
 	ToolNameUseSkill     = "use_skill"
 )

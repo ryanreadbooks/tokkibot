@@ -68,9 +68,19 @@ func UseSkill(loader *skill.Loader) tool.Invoker {
 
 			return refManual.String(), nil
 		case UseSkillActionScript:
-			return s.ExecuteScript(input.Args)
+			return safeExecuteSkillScript(s, input.Args)
 		}
 
 		return "", fmt.Errorf("invalid skill action: %s", input.Action)
 	})
+}
+
+func safeExecuteSkillScript(s *skill.Skill, command string) (string, error) {
+	// command can only be executed in the skill's directory
+	if checkCommandBlocked(command) {
+		return "", fmt.Errorf("command blocked: matches dangerous pattern")
+	}
+	// TODO light-weight sandbox is required
+
+	return s.ExecuteScript(command)
 }

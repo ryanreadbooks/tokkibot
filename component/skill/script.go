@@ -20,7 +20,7 @@ func (s *Script) Execute(command string) (string, error) {
 
 	instruct, args := bash.ParseCommand(command)
 	cmd := exec.CommandContext(ctx, instruct, args...)
-	cmd.Dir = s.Path // working directory of the script
+	cmd.Dir = s.Path
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -30,7 +30,6 @@ func (s *Script) Execute(command string) (string, error) {
 	outputStr := string(output)
 
 	const maxAllowedScriptOutputLen = 15000
-	// truncate output
 	if len(outputStr) > maxAllowedScriptOutputLen {
 		more := len(outputStr) - maxAllowedScriptOutputLen
 		outputStr = outputStr[:maxAllowedScriptOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)

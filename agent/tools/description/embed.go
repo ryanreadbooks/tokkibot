@@ -13,3 +13,6 @@ var GlobDescription string
 
 //go:embed use_skill.md
 var UseSkillDescription string
+
+//go:embed cron.md
+var CronDescription string

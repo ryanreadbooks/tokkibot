@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
+	"github.com/ryanreadbooks/tokkibot/agent/tools/guard"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/pkg/bash"
 	pkgos "github.com/ryanreadbooks/tokkibot/pkg/os"
@@ -48,7 +50,7 @@ type ShellInput struct {
 
 // checkCommandNeedsConfirmation checks if command requires user confirmation
 func checkCommandNeedsConfirmation(command string) bool {
-	for _, p := range confirmRequiredPatterns {
+	for _, p := range guard.ConfirmRequiredPatterns {
 		if p.MatchString(command) {
 			return true
 		}
@@ -58,11 +60,12 @@ func checkCommandNeedsConfirmation(command string) bool {
 
 // checkCommandBlocked checks if command is completely blocked
 func checkCommandBlocked(command string) bool {
-	for _, p := range dangerousPatterns {
+	for _, p := range guard.DangerousPatterns {
 		if p.MatchString(command) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -81,7 +84,7 @@ func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput)
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	if input.WorkingDir != "" {
-		cleanWd, _ := resolvePath(input.WorkingDir, []string{})
+		cleanWd, _ := guard.ResolvePath(input.WorkingDir, []string{})
 		cmd.Dir = cleanWd
 	}
 
@@ -102,6 +105,7 @@ func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput)
 }
 
 func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) error {
+	input.Command = strings.TrimSpace(input.Command)
 	// Check if command is completely blocked
 	if checkCommandBlocked(input.Command) {
 		return wrapShellError(errDangerousCommand, shellBlockedTag)

@@ -19,7 +19,6 @@ const (
 	refDir    = "refs"
 	RefPrefix = "@refs/"
 
-	mediaRefDir    = "medias"
 	MediaRefPrefix = "@medias/"
 )
 

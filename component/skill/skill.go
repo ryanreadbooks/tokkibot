@@ -61,9 +61,10 @@ func (m *SkillFrontmatter) validate(skillName string) error {
 	if !validateSkillName(m.Name) {
 		return fmt.Errorf("invalid skill name")
 	}
-	if m.Name != skillName {
-		return fmt.Errorf("skill name mismatch")
-	}
+	// some skills do not obey the name convention, so we don't validate the name
+	// if m.Name != skillName {
+	// 	return fmt.Errorf("skill name mismatch")
+	// }
 	if !validateSkillDescription(m.Description) {
 		return fmt.Errorf("invalid skill description")
 	}

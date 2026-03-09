@@ -35,23 +35,38 @@ Edit `~/.tokkibot/config.json`:
 
 ```json
 {
-  "defaultProvider": "openai",
   "providers": {
     "openai": {
       "apiKey": "${OPENAI_API_KEY}",
       "baseURL": "https://api.openai.com/v1",
       "defaultModel": "gpt-4o-mini"
+    },
+    "deepseek": {
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "baseURL": "https://api.deepseek.com/v1",
+      "defaultModel": "deepseek-reasoner",
+      "enableThinking": true
     }
   },
-  "adapters": {
-    "lark": {
-      "appId": "your-app-id",
-      "appSecret": "your-app-secret"
+  "agents": [
+    {
+      "id": "main",
+      "maxIteration": 30,
+      "provider": "openai",
+      "model": "gpt-4o",
+      "binding": {
+        "match": { "channel": "lark", "account": "default" }
+      }
     }
-  },
-  "agent": {
-    "maxIteration": 30
-  }
+  ],
+  "channels": [
+    {
+      "name": "lark",
+      "account": {
+        "default": { "appId": "your-app-id", "appSecret": "your-app-secret" }
+      }
+    }
+  ]
 }
 ```
 
@@ -79,10 +94,17 @@ tokkibot gateway
 After starting, the bot will listen to Lark messages and respond automatically.
 
 **Control Commands:**
-- `/stop` - Stop current task
-- `/new` - Start new session
-- `/compact` - Compress context
-- `/help` - Show help
+
+| Command | Description |
+|---------|-------------|
+| `/stop` | Stop current task |
+| `/new` | Start new session |
+| `/compact` | Compress context |
+| `/skill list` | List all available skills |
+| `/skill info <name>` | Show skill details |
+| `/mcp list` | List all MCP servers and status |
+| `/mcp info <server>` | Show server tools |
+| `/help` | Show help |
 
 ### Scheduled Tasks
 
@@ -116,29 +138,67 @@ tokkibot cron disable daily-report
 tokkibot cron delete daily-report
 ```
 
-## Workspace
+### Skills
 
-Default workspace is located at `~/.tokkibot/`:
+Skills extend the agent's capabilities with domain-specific knowledge and tools. Install skills using [clawhub](https://github.com/openclaw/clawhub):
 
+```bash
+# Install a skill
+clawhub install tavily-search --dir ~/.tokkibot/skills
+
+# Install with specific version
+clawhub install tavily-search@1.0.0 --dir ~/.tokkibot/skills
 ```
-~/.tokkibot/
-├── config.json      # Configuration file
-├── mcp.json         # MCP servers configuration (optional)
-├── prompts/         # System prompts (customizable)
-├── memory/          # Long-term memory
-│   └── LONG-TERM.md
-├── crons/           # Scheduled tasks
-│   └── <task-name>/
-│       ├── meta.json
-│       └── prompt.md
-└── refs/            # Reference content
+
+Skills are automatically loaded from `~/.tokkibot/skills/` on startup. Each skill contains:
+- `SKILL.md` - Skill definition and instructions
+- Additional resources (prompts, templates, etc.)
+
+### MCP (Model Context Protocol)
+
+Tokkibot supports MCP servers for extended tool capabilities. Configure in `~/.tokkibot/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropics/mcp-filesystem", "/path/to/allowed/dir"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropics/mcp-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "remote-server": {
+      "url": "http://localhost:8080/sse",
+      "headers": {
+        "Authorization": "Bearer ${API_TOKEN}"
+      }
+    }
+  }
+}
 ```
+
+**Configuration fields (command mode):**
+- `command` - Executable command to start the MCP server
+- `args` - Command line arguments
+- `env` - Environment variables (supports `${VAR}` syntax for expansion)
+
+**Configuration fields (URL mode):**
+- `url` - SSE endpoint URL for remote MCP server
+- `headers` - HTTP headers (supports `${VAR}` syntax for expansion)
+
+MCP servers are started automatically and their tools become available to the agent.
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API Key |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key |
 | `MOONSHOT_API_KEY` | Moonshot API Key |
 
 ## License

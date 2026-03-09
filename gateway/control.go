@@ -96,7 +96,7 @@ func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
 	ag := g.agentForAdapter(rawMsg.Channel)
-	if err := ag.ClearSession(channel, chatId); err != nil {
+	if err := ag.ClearContext(channel, chatId); err != nil {
 		g.sendResponse(rawMsg, "Failed to clear session: "+err.Error())
 		return
 	}
@@ -107,7 +107,7 @@ func (g *Gateway) handleCompact(rawMsg *chmodel.IncomingMessage) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
 	ag := g.agentForAdapter(rawMsg.Channel)
-	compressed, err := ag.CompactSession(rawMsg.Context(), channel, chatId)
+	compressed, err := ag.CompactContext(rawMsg.Context(), channel, chatId)
 	if err != nil {
 		g.sendResponse(rawMsg, "Failed to compact context: "+err.Error())
 		return

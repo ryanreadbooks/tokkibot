@@ -21,7 +21,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
 )
 
-//go:embed summary_prompt.md
+//go:embed summary.md
 var summaryPrompt string
 
 type (
@@ -143,9 +143,7 @@ func (a *Agent) registerTools(agentWorkspace string) {
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))
 	a.RegisterTool(tools.WebFetch())
-	a.RegisterTool(tools.ScheduleCron())
-	a.RegisterTool(tools.ListCron())
-	a.RegisterTool(tools.DeleteCron())
+	a.RegisterTool(tools.Cron())
 	a.RegisterTool(tools.TodoWrite())
 }
 
@@ -294,17 +292,20 @@ func (a *Agent) buildLLMTools() []param.Tool {
 	return params
 }
 
-// ClearSession clears all messages in a session
-func (a *Agent) ClearSession(channel, chatId string) error {
+// ClearContext clears all messages in a session
+func (a *Agent) ClearContext(channel, chatId string) error {
 	return a.contextManager.ClearSession(channel, chatId)
 }
 
-// CompactSession forces context compaction for a session
-func (a *Agent) CompactSession(ctx context.Context, channel, chatId string) (int, error) {
+// CompactContext forces context compaction for a session
+func (a *Agent) CompactContext(ctx context.Context, channel, chatId string) (int, error) {
 	providerCfg := a.providerConfig()
 
 	// Step 1: Compress tool calls
-	compressed, err := a.contextManager.CompressToolCalls(channel, chatId, providerCfg.ToolCallCompressThreshold)
+	compressed, err := a.contextManager.CompressToolCalls(channel,
+		chatId,
+		providerCfg.ToolCallCompressThreshold,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to compress tool calls: %w", err)
 	}

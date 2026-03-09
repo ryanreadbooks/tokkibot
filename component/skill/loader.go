@@ -129,7 +129,7 @@ func (l *Loader) load(path string) (*Skill, error) {
 		return nil, fmt.Errorf("%s is not a regular file", mdPath)
 	}
 
-	skillName := stat.Name()
+	skillFileName := stat.Name()
 	mdContent, err := os.ReadFile(mdPath)
 	if err != nil {
 		return nil, err
@@ -142,7 +142,7 @@ func (l *Loader) load(path string) (*Skill, error) {
 		return nil, err
 	}
 
-	if err := skill.Validate(skillName); err != nil {
+	if err := skill.Validate(skillFileName); err != nil {
 		return nil, err
 	}
 
