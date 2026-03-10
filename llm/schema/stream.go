@@ -86,9 +86,10 @@ type streamToolCallBuffer struct {
 type StreamToolCallHandler func(ctx context.Context, tc StreamChoiceDeltaToolCall)
 
 type StreamContentFragment struct {
-	Content          string
-	ReasoningContent string
-	FinishReason     FinishReason
+	Content            string
+	ReasoningContent   string
+	ReasoningSignature string
+	FinishReason       FinishReason
 }
 
 type StreamToolCallFragment struct {
@@ -181,9 +182,10 @@ func readStreamResponseChunk(
 		if delta.Content != "" || delta.ReasoningContent != "" {
 			select {
 			case contentCh <- &StreamContentFragment{
-				Content:          delta.Content,
-				ReasoningContent: delta.ReasoningContent,
-				FinishReason:     curChoice.FinishReason,
+				Content:            delta.Content,
+				ReasoningContent:   delta.ReasoningContent,
+				ReasoningSignature: delta.Signature,
+				FinishReason:       curChoice.FinishReason,
 			}:
 			case <-ctx.Done():
 				return

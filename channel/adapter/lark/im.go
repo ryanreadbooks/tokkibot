@@ -377,14 +377,18 @@ func (a *LarkAdapter) parseMessageByType(ctx context.Context, messageId, msgType
 	case imv1.MsgTypePost:
 		content, attachments, err = a.handlePostMessage(ctx, rawContent, messageId)
 	case imv1.MsgTypeImage:
-		var imageKey string
-		var imageData []byte
-		imageKey, imageData, err = a.handleImageMessage(ctx, messageId, rawContent)
+		var (
+			mimeType  string
+			imageKey  string
+			imageData []byte
+		)
+		imageKey, imageData, mimeType, err = a.handleImageMessage(ctx, messageId, rawContent)
 		if err == nil && len(imageData) > 0 {
 			attachments = append(attachments, &model.IncomingMessageAttachment{
-				Key:  wrapResourceKey(imageKey),
-				Type: model.AttachmentImage,
-				Data: imageData,
+				Key:      wrapResourceKey(imageKey),
+				Type:     model.AttachmentImage,
+				Data:     imageData,
+				MimeType: mimeType,
 			})
 		}
 	default:

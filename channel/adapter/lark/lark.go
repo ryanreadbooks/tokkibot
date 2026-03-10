@@ -173,12 +173,14 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		var (
 			imageData []byte
 			imageKey  string
+			mimeType  string
 		)
-		imageKey, imageData, err = a.handleImageMessage(ctx, messageId, messageContent)
+		imageKey, imageData, mimeType, err = a.handleImageMessage(ctx, messageId, messageContent)
 		attachments = append(attachments, &model.IncomingMessageAttachment{
-			Key:  wrapResourceKey(imageKey),
-			Type: model.AttachmentImage,
-			Data: imageData,
+			Key:      wrapResourceKey(imageKey),
+			Type:     model.AttachmentImage,
+			Data:     imageData,
+			MimeType: mimeType,
 		})
 	case imv1.MsgTypeFile:
 		var (

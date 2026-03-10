@@ -28,8 +28,8 @@ func TestEstimateRequestToken(t *testing.T) {
 							},
 						},
 					},
-					&param.String{
-						Value: "Let me think",
+					&param.ReasoningContent{
+						Content: "Let me think",
 					}),
 			},
 			Tools: []param.Tool{

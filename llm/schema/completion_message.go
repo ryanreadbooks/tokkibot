@@ -5,7 +5,7 @@ import "github.com/ryanreadbooks/tokkibot/llm/schema/param"
 // completion message responsed from LLM service
 type CompletionMessage struct {
 	Content          string
-	ReasoningContent string
+	ReasoningContent *ReasoningContent
 	ToolCalls        []CompletionToolCall
 
 	// assistant message only
@@ -24,9 +24,15 @@ func (m *CompletionMessage) GetToolCalls() []*param.ToolCall {
 	return params
 }
 
+type ReasoningContent struct {
+	Content   string `json:"content,omitempty"`
+	Signature string `json:"signature,omitempty"` // anthropic style
+}
+
 type StreamChoiceDelta struct {
 	Content          string
 	ReasoningContent string
+	Signature        string // reasoning signature
 	Role             Role
 	ToolCalls        []StreamChoiceDeltaToolCall
 }

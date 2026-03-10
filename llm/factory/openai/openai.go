@@ -224,7 +224,7 @@ func toChatCompletionNewParams(req *schema.Request) (openai.ChatCompletionNewPar
 		params.Messages = append(params.Messages, toChatCompletionMessage(&message))
 		if message.Assistant != nil && message.Assistant.ReasoningContent != nil {
 			jsonKey := fmt.Sprintf("messages.%d.reasoning_content", idx)
-			opts = append(opts, option.WithJSONSet(jsonKey, message.Assistant.ReasoningContent.Value))
+			opts = append(opts, option.WithJSONSet(jsonKey, message.Assistant.ReasoningContent.Content))
 		}
 	}
 
@@ -261,10 +261,12 @@ func toChoice(choice openai.ChatCompletionChoice) schema.Choice {
 		FinishReason: schema.FinishReason(choice.FinishReason),
 		Index:        choice.Index,
 		Message: schema.CompletionMessage{
-			Role:             schema.Role(choice.Message.Role),
-			Content:          choice.Message.Content,
-			ReasoningContent: rs,
-			ToolCalls:        toolCalls,
+			Role:    schema.Role(choice.Message.Role),
+			Content: choice.Message.Content,
+			ReasoningContent: &schema.ReasoningContent{
+				Content: rs,
+			},
+			ToolCalls: toolCalls,
 		},
 	}
 }
@@ -373,8 +375,13 @@ func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *schema.Request) 
 
 		// read in the background
 		for stream.Next() {
+			chunk := toStreamResponseChunk(stream.Current())
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+
 			select {
-			case ch <- toStreamResponseChunk(stream.Current()):
+			case ch <- chunk:
 			case <-ctx.Done():
 				return
 			}

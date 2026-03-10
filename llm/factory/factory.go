@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/ryanreadbooks/tokkibot/llm"
+	"github.com/ryanreadbooks/tokkibot/llm/factory/anthropic"
 	"github.com/ryanreadbooks/tokkibot/llm/factory/openai"
 )
 
@@ -76,6 +77,11 @@ func NewLLM(opts ...Option) (llm.LLM, error) {
 	switch proOpt.style {
 	case StyleOpenAI:
 		return openai.New(openai.Config{
+			ApiKey:  proOpt.apiKey,
+			BaseURL: proOpt.baseURL,
+		})
+	case StyleAnthropic:
+		return anthropic.New(anthropic.Config{
 			ApiKey:  proOpt.apiKey,
 			BaseURL: proOpt.baseURL,
 		})

@@ -192,23 +192,26 @@ func (a *LarkAdapter) handlePostMessage(ctx context.Context, content, messageId 
 	return textBuilder.String(), attachments, nil
 }
 
-func (a *LarkAdapter) handleImageMessage(ctx context.Context, messageId, content string) (string, []byte, error) {
+func (a *LarkAdapter) handleImageMessage(ctx context.Context, messageId, content string) (string, []byte, string, error) {
 	var image ImageMessageContent
 	err := json.Unmarshal(xstring.ToBytes(content), &image)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
 	if len(image.ImageKey) == 0 {
-		return "", nil, fmt.Errorf("image key is empty")
+		return "", nil, "", fmt.Errorf("image key is empty")
 	}
 
 	data, err := a.downloadMessageResourceImage(ctx, messageId, image.ImageKey)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
-	return image.ImageKey, data, nil
+	// detect mime type
+	mimeType := mimetype.Detect(data)
+
+	return image.ImageKey, data, mimeType.String(), nil
 }
 
 func (a *LarkAdapter) handleFileMessage(ctx context.Context, messageId, content string) (string, []byte, error) {

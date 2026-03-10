@@ -136,6 +136,7 @@ mainLoop:
 			wg                      sync.WaitGroup
 			contentBuilder          strings.Builder
 			reasoningContentBuilder strings.Builder
+			reasoningSignature      string
 			dstTcs                  = make([]*toolCallAndResult, 0)
 		)
 
@@ -152,14 +153,19 @@ mainLoop:
 			a.handleStreamingToolCall(toolMeta, &dstTcs),
 		)
 
+		// accumluate content and reasoning content
 		wg.Go(func() {
 			for content := range streamPacked.Content {
 				emitter.EmitContent(curIter, content.Content, content.ReasoningContent)
 				contentBuilder.WriteString(content.Content)
 				reasoningContentBuilder.WriteString(content.ReasoningContent)
+				if content.ReasoningSignature != "" {
+					reasoningSignature = content.ReasoningSignature
+				}
 			}
 		})
 
+		// accumulate tool call
 		wg.Go(func() {
 			type toolCallAcc struct {
 				Name string
@@ -202,9 +208,12 @@ mainLoop:
 		}
 
 		err = a.contextManager.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
-			Content:          contentBuilder.String(),
-			ToolCalls:        assistantTcs,
-			ReasoningContent: reasoningContentBuilder.String(),
+			Content:   contentBuilder.String(),
+			ToolCalls: assistantTcs,
+			ReasoningContent: &schema.ReasoningContent{
+				Content:   reasoningContentBuilder.String(),
+				Signature: reasoningSignature,
+			},
 		})
 		if err != nil {
 			emitter.EmitContent(curIter, err.Error(), "")

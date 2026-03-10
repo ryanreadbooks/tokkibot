@@ -126,9 +126,10 @@ const (
 )
 
 type IncomingMessageAttachment struct {
-	Key  string
-	Type AttachmentType
-	Data []byte
+	Key      string
+	Type     AttachmentType
+	Data     []byte
+	MimeType string
 }
 
 // unique session identifier for the message

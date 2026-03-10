@@ -222,7 +222,8 @@ func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionW
 			params = append(params, &contentUnionWithKey{
 				ContentUnion: &param.ContentUnion{
 					ImageURL: &param.ImageURL{
-						URL: data,
+						URL:       data,
+						MediaType: attachment.MimeType,
 					},
 				},
 				Key: attachment.Key,
@@ -337,9 +338,12 @@ func (c *ContextManager) AppendAssistantMessage(
 	inMsg *UserInput,
 	msg *schema.CompletionMessage,
 ) error {
-	var reasoningContent *param.String
-	if msg.ReasoningContent != "" {
-		reasoningContent = &param.String{Value: msg.ReasoningContent}
+	var reasoningContent *param.ReasoningContent
+	if msg.ReasoningContent != nil {
+		reasoningContent = &param.ReasoningContent{
+			Content:   msg.ReasoningContent.Content,
+			Signature: msg.ReasoningContent.Signature,
+		}
 	}
 	msgParam := param.NewAssistantMessage(
 		msg.Content,

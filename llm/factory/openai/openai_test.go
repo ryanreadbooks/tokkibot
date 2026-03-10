@@ -147,9 +147,9 @@ func TestChatCompletion(t *testing.T) {
 
 		if choice.Message.HasToolCalls() {
 			fmt.Println("Tool Calls:")
-			var reasoningContent *param.String
-			if choice.Message.ReasoningContent != "" {
-				reasoningContent = &param.String{Value: choice.Message.ReasoningContent}
+			var reasoningContent *param.ReasoningContent
+			if choice.Message.ReasoningContent != nil {
+				reasoningContent = &param.ReasoningContent{Content: choice.Message.ReasoningContent.Content}
 			}
 			messages = append(messages,
 				param.NewAssistantMessage(

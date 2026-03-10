@@ -6,6 +6,7 @@ const (
 	FinishReasonStop      FinishReason = "stop"
 	FinishReasonLength    FinishReason = "length"
 	FinishReasonToolCalls FinishReason = "tool_calls"
+	FinishReasonRefusal   FinishReason = "refusal" // content_filter
 )
 
 func (f FinishReason) IsToolCalls() bool {
@@ -18,4 +19,8 @@ func (f FinishReason) IsStopped() bool {
 
 func (f FinishReason) IsLengthed() bool {
 	return f == FinishReasonLength
+}
+
+func (f FinishReason) IsRefused() bool {
+	return f == FinishReasonRefusal
 }

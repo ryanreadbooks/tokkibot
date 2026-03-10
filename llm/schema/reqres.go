@@ -49,7 +49,7 @@ func (r *Response) FirstChoice() Choice {
 			FinishReason: FinishReasonStop,
 			Message: CompletionMessage{
 				Role:    RoleAssistant,
-				Content: "It seems the LLM service did not respond anything.",
+				Content: "",
 			},
 		}
 	}
@@ -76,7 +76,7 @@ func (s *StreamResponseChunk) FirstChoice() StreamChoice {
 			Index:        0,
 			Delta: StreamChoiceDelta{
 				Role:    RoleAssistant,
-				Content: "It seems the LLM service did not respond anything.",
+				Content: "Empty choice",
 			},
 		}
 	}

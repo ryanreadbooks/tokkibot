@@ -2,7 +2,7 @@ package schema
 
 type Choice struct {
 	FinishReason FinishReason
-	Index        int64
+	Index        int64 // not applicable for anthropic style
 	Message      CompletionMessage
 }
 
@@ -23,4 +23,3 @@ type StreamChoice struct {
 	Index        int64
 	Delta        StreamChoiceDelta
 }
-

@@ -24,9 +24,10 @@ const (
 
 // image, audio, video, file, etc
 type UserInputAttachment struct {
-	Key  string
-	Type AttachmentType
-	Data []byte
+	Key      string
+	Type     AttachmentType
+	Data     []byte
+	MimeType string
 }
 
 type UserInputControl struct {

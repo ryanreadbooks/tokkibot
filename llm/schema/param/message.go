@@ -36,8 +36,11 @@ func TextsContent(texts []*Text) string {
 }
 
 type ImageURL struct {
-	URL string `json:"url"`
+	URL string `json:"url"` // usaually base64 encoded image data
 	Key string `json:"key,omitempty"`
+
+	// image/jpeg, image/png, image/gif, image/webp
+	MediaType string `json:"media_type,omitempty"`
 }
 
 func (p *ImageURL) GetURL() string {
@@ -132,11 +135,24 @@ func (p *UserMessage) GetContent() string {
 	return ContentUnionsContent(p.ContentParts)
 }
 
+type ReasoningContent struct {
+	Content   string `json:"content,omitempty"`
+	Signature string `json:"signature,omitempty"` // anthropic style
+}
+
+func (p *ReasoningContent) GetValue() string {
+	if p == nil {
+		return ""
+	}
+
+	return p.Content
+}
+
 type AssistantMessage struct {
-	Content          *String     `json:"content,omitzero"`
-	Texts            []*Text     `json:"texts,omitzero"`
-	ToolCalls        []*ToolCall `json:"tool_calls,omitzero"`
-	ReasoningContent *String     `json:"reasoning_content,omitzero"`
+	Content          *String           `json:"content,omitzero"`
+	Texts            []*Text           `json:"texts,omitzero"`
+	ToolCalls        []*ToolCall       `json:"tool_calls,omitzero"`
+	ReasoningContent *ReasoningContent `json:"reasoning_content,omitzero"`
 }
 
 func (p *AssistantMessage) GetContent() string {
@@ -247,7 +263,7 @@ func NewUserMessage[T string | []*ContentUnion](msg T) Message {
 func NewAssistantMessage[T string | []*Text](
 	msg T,
 	toolCalls []*ToolCall,
-	reasoningContent *String,
+	reasoningContent *ReasoningContent,
 ) Message {
 	assistant := AssistantMessage{}
 	switch v := any(msg).(type) {
