@@ -7,6 +7,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/cmd/mcp"
 	"github.com/ryanreadbooks/tokkibot/cmd/onboard"
 	"github.com/ryanreadbooks/tokkibot/config"
+	"github.com/ryanreadbooks/tokkibot/pkg/log"
 	"github.com/ryanreadbooks/tokkibot/pkg/process"
 	"github.com/spf13/cobra"
 )
@@ -44,4 +45,7 @@ func main() {
 	cancel()
 
 	wait()
+
+	// Close logger on exit
+	log.Close()
 }

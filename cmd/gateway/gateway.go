@@ -24,11 +24,14 @@ var GatewayCmd = &cobra.Command{
 }
 
 func initGateway(ctx context.Context) error {
+	slog.Info("[cmd/gateway] initializing gateway")
+
 	g, err := gw.NewGateway(ctx,
 		gw.WithVerbose(true),
 		gw.WithRunCronTasks(true),
 	)
 	if err != nil {
+		slog.Error("[cmd/gateway] failed to create gateway", slog.Any("error", err))
 		return err
 	}
 
@@ -43,18 +46,18 @@ func initGateway(ctx context.Context) error {
 		adapter, err := createAdapter(match.Channel, match.Account)
 		if err != nil {
 			slog.Warn("failed to create adapter for agent binding",
-				"agent", agentEntry.Id,
-				"channel", match.Channel,
-				"account", match.Account,
-				"error", err)
+				slog.String("agent", agentEntry.Id),
+				slog.String("channel", match.Channel),
+				slog.String("account", match.Account),
+				slog.Any("error", err))
 			continue
 		}
 
 		g.AddAdapter(adapter, agentEntry.Id)
 		slog.Info("adapter created from binding",
-			"agent", agentEntry.Id,
-			"channel", match.Channel,
-			"account", match.Account)
+			slog.String("agent", agentEntry.Id),
+			slog.String("channel", match.Channel),
+			slog.String("account", match.Account))
 	}
 
 	return g.Run(ctx)

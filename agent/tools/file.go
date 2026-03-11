@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,14 +31,17 @@ func ReadFile(allowDirs []string) tool.Invoker {
 			"in format 'LINE_NUMBER|LINE_CONTENT' (1-indexed). Supports reading partial content " +
 			"by specifying line offset and limit for large files. ",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *ReadFileInput) (content string, err error) {
-		// now we can read the file
+		slog.DebugContext(ctx, "[tool/file] reading file", slog.String("path", input.Path), slog.Int("offset", input.Offset), slog.Int("limit", input.Limit))
+
 		cleanPath, err := guard.ResolvePath(input.Path, allowDirs)
 		if err != nil {
+			slog.WarnContext(ctx, "[tool/file] path resolution failed", slog.String("path", input.Path), slog.Any("error", err))
 			return "", err
 		}
 
 		f, err := os.Open(cleanPath)
 		if err != nil {
+			slog.WarnContext(ctx, "[tool/file] failed to open file", slog.String("path", cleanPath), slog.Any("error", err))
 			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)
 		}
 		defer f.Close()
@@ -69,6 +73,7 @@ func ReadFile(allowDirs []string) tool.Invoker {
 			numberedLines = append(numberedLines, fmt.Sprintf("%d|%s", start+i+1, strings.TrimRight(selected[i], "\n")))
 		}
 
+		slog.InfoContext(ctx, "[tool/file] file read completed", slog.String("path", cleanPath), slog.Int("total_lines", len(lines)), slog.Int("returned_lines", len(selected)))
 		return strings.Join(numberedLines, "\n"), nil
 	})
 }
@@ -84,26 +89,32 @@ func WriteFile(allowDirs []string) tool.Invoker {
 		Name:        ToolNameWriteFile,
 		Description: "Write content to a file at the given path. Creates parent directories if necessary.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *WriteFileInput) (result string, err error) {
+		slog.DebugContext(ctx, "[tool/file] writing file", slog.String("path", input.Path), slog.Int("content_len", len(input.Content)))
+
 		cleanPath, err := guard.ResolvePath(input.Path, allowDirs)
 		if err != nil {
+			slog.WarnContext(ctx, "[tool/file] path resolution failed", slog.String("path", input.Path), slog.Any("error", err))
 			return "", err
 		}
 
 		if guard.IsPathWriteProtected(cleanPath) {
+			slog.WarnContext(ctx, "[tool/file] write protected path", slog.String("path", cleanPath))
 			return "", fmt.Errorf("path %s is write protected", cleanPath)
 		}
 
 		err = os.MkdirAll(filepath.Dir(cleanPath), 0755)
 		if err != nil {
+			slog.ErrorContext(ctx, "[tool/file] failed to create parent directories", slog.String("path", input.Path), slog.Any("error", err))
 			return "", fmt.Errorf("failed to create parent directories for %s: %w", input.Path, err)
 		}
 
-		// write the file
 		err = os.WriteFile(cleanPath, []byte(input.Content), 0644)
 		if err != nil {
+			slog.ErrorContext(ctx, "[tool/file] failed to write file", slog.String("path", cleanPath), slog.Any("error", err))
 			return "", fmt.Errorf("failed to write file %s: %w", cleanPath, err)
 		}
 
+		slog.InfoContext(ctx, "[tool/file] file written successfully", slog.String("path", cleanPath), slog.Int("bytes", len(input.Content)))
 		return fmt.Sprintf("File %s written successfully", cleanPath), nil
 	})
 }
@@ -157,17 +168,22 @@ func EditFile(allowDirs []string) tool.Invoker {
 		Name:        ToolNameEditFile,
 		Description: "Edit the contents of a file at the given path by replacing the old string with the new string.",
 	}, func(ctx context.Context, meta tool.InvokeMeta, input *EditFileInput) (result string, err error) {
+		slog.DebugContext(ctx, "[tool/file] editing file", slog.String("path", input.FileName), slog.Bool("replace_all", input.ReplaceAll))
+
 		cleanPath, err := guard.ResolvePath(input.FileName, allowDirs)
 		if err != nil {
+			slog.WarnContext(ctx, "[tool/file] path resolution failed", slog.String("path", input.FileName), slog.Any("error", err))
 			return "", err
 		}
 
 		if guard.IsPathWriteProtected(cleanPath) {
+			slog.WarnContext(ctx, "[tool/file] write protected path", slog.String("path", cleanPath))
 			return "", fmt.Errorf("path %s is write protected", cleanPath)
 		}
 
 		f, err := os.OpenFile(cleanPath, os.O_RDWR, 0664)
 		if err != nil {
+			slog.ErrorContext(ctx, "[tool/file] failed to open file for editing", slog.String("path", cleanPath), slog.Any("error", err))
 			return "", fmt.Errorf("failed to open file %s: %w", cleanPath, err)
 		}
 		defer f.Close()
@@ -184,7 +200,6 @@ func EditFile(allowDirs []string) tool.Invoker {
 			contentStr = strings.Replace(contentStr, input.OldString, input.NewString, 1)
 		}
 
-		// Seek to beginning and truncate file before writing
 		if _, err = f.Seek(0, 0); err != nil {
 			return "", fmt.Errorf("failed to seek file %s: %w", cleanPath, err)
 		}
@@ -194,9 +209,11 @@ func EditFile(allowDirs []string) tool.Invoker {
 
 		_, err = f.WriteString(contentStr)
 		if err != nil {
+			slog.ErrorContext(ctx, "[tool/file] failed to write edited content", slog.String("path", cleanPath), slog.Any("error", err))
 			return "", fmt.Errorf("failed to write file %s: %w", cleanPath, err)
 		}
 
+		slog.InfoContext(ctx, "[tool/file] file edited successfully", slog.String("path", cleanPath))
 		return fmt.Sprintf("File %s edited successfully", cleanPath), nil
 	})
 }

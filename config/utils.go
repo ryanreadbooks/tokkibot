@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/ryanreadbooks/tokkibot/pkg/log"
 )
 
 const (
@@ -25,11 +27,22 @@ var (
 func MustInit() {
 	GetHomeDir()
 	GetProjectDir()
+
+	// Initialize logger first
+	if err := log.Init(GetLogsDir()); err != nil {
+		panic(fmt.Errorf("failed to init logger: %w", err))
+	}
+
 	var err error
 	conf, err = LoadConfig()
 	if err != nil {
 		panic(err)
 	}
+}
+
+// GetLogsDir returns the logs directory path: ~/.tokkibot/logs
+func GetLogsDir() string {
+	return filepath.Join(GetHomeDir(), "logs")
 }
 
 const configFileName = "config.json"

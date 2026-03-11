@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
@@ -23,7 +25,10 @@ func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) erro
 }
 
 func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage) string {
+	slog.InfoContext(ctx, "[agent] handling incoming message", slog.Int("content_len", len(userMsg.Content)))
+
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
+		slog.ErrorContext(ctx, "[agent] failed to init message context", slog.Any("error", err))
 		return err.Error()
 	}
 
@@ -36,42 +41,61 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
+			slog.WarnContext(ctx, "[agent] message handling cancelled", slog.Int("iteration", curIter))
 			return formatCancelledError(ctx)
 		default:
 		}
 
 		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
+			slog.ErrorContext(ctx, "[agent] failed to build llm request", slog.Int("iteration", curIter), slog.Any("error", err))
 			return fmt.Sprintf("(failed to build llm message request: %s)", err.Error())
 		}
 
+		slog.DebugContext(ctx, "[agent] calling LLM",
+			slog.Int("iteration", curIter),
+			slog.String("model", llmReq.Model),
+			slog.Int("messages_count", len(llmReq.Messages)),
+			slog.Int("tools_count", len(llmReq.Tools)))
+
+		startTime := time.Now()
 		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
 		if err != nil {
+			slog.ErrorContext(ctx, "[agent] LLM call failed", slog.Int("iteration", curIter), slog.Int64("duration_ms", time.Since(startTime).Milliseconds()), slog.Any("error", err))
 			return fmt.Sprintf("(failed to call llm: %s)", err.Error())
 		}
+
+		slog.InfoContext(ctx, "[agent] LLM response received",
+			slog.Int("iteration", curIter),
+			slog.Int64("duration_ms", time.Since(startTime).Milliseconds()),
+			slog.String("finish_reason", string(llmResp.FirstChoice().FinishReason)),
+			slog.Int("tool_calls_count", len(llmResp.FirstChoice().Message.ToolCalls)))
+
 		lastResponse = llmResp
 
 		choice := llmResp.FirstChoice()
 		if err := a.contextManager.AppendAssistantMessage(userMsg, &choice.Message); err != nil {
+			slog.ErrorContext(ctx, "[agent] failed to append assistant message", slog.Any("error", err))
 			return err.Error()
 		}
 
 		if choice.IsStopped() {
+			slog.InfoContext(ctx, "[agent] conversation completed", slog.Int("iterations", curIter), slog.Int("response_len", len(choice.Message.Content)))
 			return choice.Message.Content
 		}
 
 		if choice.HasToolCalls() {
-			// IMPORTANT: must complete all tool calls to match assistant's tool_calls
-			// even if ctx is cancelled, we need to save all tool results
+			slog.DebugContext(ctx, "[agent] processing tool calls", slog.Int("count", len(choice.Message.ToolCalls)))
 			for _, tc := range choice.Message.ToolCalls {
 				if err := a.handleToolCall(ctx, toolMeta, userMsg, &tc); err != nil {
+					slog.ErrorContext(ctx, "[agent] tool call failed", slog.String("tool", tc.Function.Name), slog.Any("error", err))
 					return err.Error()
 				}
 			}
 		}
 	}
 
-	// max iterations reached
+	slog.WarnContext(ctx, "[agent] max iterations reached", slog.Int("max_iteration", a.c.MaxIteration))
 	if lastResponse != nil {
 		return fmt.Sprintf("(max iterations reached, last response: %s)",
 			lastResponse.FirstChoice().Message.Content)
@@ -255,9 +279,13 @@ func (a *Agent) handleToolCall(
 func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, tc *schema.CompletionToolCall) string {
 	select {
 	case <-ctx.Done():
+		slog.DebugContext(ctx, "[agent] tool invoke cancelled", slog.String("tool", tc.Function.Name))
 		return formatCancelledError(ctx)
 	default:
 	}
+
+	slog.DebugContext(ctx, "[agent] invoking tool", slog.String("tool", tc.Function.Name), slog.Int("args_len", len(tc.Function.Arguments)))
+	startTime := time.Now()
 
 	// try builtin tools first
 	a.toolsMu.RLock()
@@ -266,9 +294,12 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 
 	if ok {
 		result, err := builtinTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
+		duration := time.Since(startTime).Milliseconds()
 		if err != nil {
+			slog.WarnContext(ctx, "[agent] builtin tool error", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Any("error", err))
 			return err.Error()
 		}
+		slog.InfoContext(ctx, "[agent] builtin tool completed", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Int("result_len", len(result)))
 		return result
 	}
 
@@ -276,12 +307,16 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 	if a.mcpLoaded.Load() {
 		if mcpTool, found := a.mcpManager.GetTool(tc.Function.Name); found {
 			result, err := mcpTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
+			duration := time.Since(startTime).Milliseconds()
 			if err != nil {
+				slog.WarnContext(ctx, "[agent] mcp tool error", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Any("error", err))
 				return err.Error()
 			}
+			slog.InfoContext(ctx, "[agent] mcp tool completed", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Int("result_len", len(result)))
 			return result
 		}
 	}
 
+	slog.WarnContext(ctx, "[agent] tool not found", slog.String("tool", tc.Function.Name))
 	return fmt.Sprintf("(tool %s not found)", tc.Function.Name)
 }

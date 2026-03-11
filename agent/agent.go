@@ -78,14 +78,21 @@ func NewAgent(
 	llm llm.LLM,
 	c AgentConfig,
 ) *Agent {
+	slog.Info("[agent] creating new agent",
+		slog.String("name", c.Name),
+		slog.String("provider", c.Provider),
+		slog.String("model", c.Model),
+		slog.Int("max_iteration", c.MaxIteration))
+
 	agentWorkspace := c.WorkspaceOverride
 	if agentWorkspace == "" {
 		agentWorkspace = config.GetAgentWorkspaceDir(c.Name)
 	}
+	slog.Debug("[agent] workspace configured", slog.String("workspace", agentWorkspace))
 
 	skillLoader := skill.NewLoader()
 	if err := skillLoader.Init(agentWorkspace); err != nil {
-		slog.Error("[agent] failed to init skill loader", "error", err)
+		slog.Error("[agent] failed to init skill loader", slog.Any("error", err))
 		os.Exit(1)
 	}
 
@@ -98,7 +105,7 @@ func NewAgent(
 		skillLoader,
 	)
 	if err != nil {
-		slog.Error("[agent] failed to create context manager, now exit", "error", err)
+		slog.Error("[agent] failed to create context manager, now exit", slog.Any("error", err))
 		os.Exit(1)
 	}
 
@@ -108,10 +115,11 @@ func NewAgent(
 	mcpConfig, err := config.GetMcpConfig()
 	mcpLoaded := false
 	if err != nil {
-		// stay quiet
+		slog.Debug("[agent] mcp config not found, mcp tools disabled")
 	} else {
 		mcpLoaded = true
 		mcpManager.Init(c.RootCtx, mcpConfig)
+		slog.Info("[agent] mcp tools loaded", slog.Int("tools_count", len(mcpManager.ListTools())))
 	}
 
 	agent := &Agent{
@@ -126,6 +134,7 @@ func NewAgent(
 	agent.mcpLoaded.Store(mcpLoaded)
 
 	agent.registerTools(agentWorkspace)
+	slog.Info("[agent] agent created successfully", slog.String("name", c.Name), slog.Int("builtin_tools", len(agent.tools)))
 
 	return agent
 }
@@ -156,7 +165,7 @@ func (a *Agent) RegisterTool(tool tool.Invoker) {
 	defer a.toolsMu.Unlock()
 
 	if _, ok := a.tools[tool.Info().Name]; ok {
-		slog.Warn("[agent] tool already registered", "tool_name", tool.Info().Name)
+		slog.Warn("[agent] tool already registered", slog.String("tool_name", tool.Info().Name))
 	} else {
 		a.tools[tool.Info().Name] = tool
 	}

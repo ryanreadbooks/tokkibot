@@ -14,6 +14,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/cron"
+	"github.com/ryanreadbooks/tokkibot/pkg/trace"
 )
 
 type gatewayOption struct {
@@ -112,7 +113,7 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	gateway.cronMgr.SetHandler(gateway.handleCronTask)
 
 	if err := gateway.cronMgr.Load(); err != nil {
-		slog.Warn("failed to load cron tasks", "error", err)
+		slog.Warn("failed to load cron tasks", slog.Any("error", err))
 	}
 
 	return gateway, nil
@@ -177,16 +178,28 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 		select {
 		case <-ctx.Done():
 			if g.verbose {
-				slog.Info("message worker stopped", "adapter", adapter.Type(), "reason", ctx.Err())
+				slog.InfoContext(ctx, "message worker stopped", slog.String("adapter", adapter.Type().String()), slog.Any("reason", ctx.Err()))
 			}
 			return
 		case rawMsg := <-adapter.ReceiveChan():
+			// Create trace info and inject into context
+			// MessageId may be stored in metadata if available
+			messageId := ""
+			if mid, ok := rawMsg.Metadata["message_id"].(string); ok {
+				messageId = mid
+			}
+			traceInfo := trace.NewTraceInfo(
+				rawMsg.Channel.String(),
+				rawMsg.ChatId,
+				messageId,
+			)
+			taskCtx := trace.WithTrace(rawMsg.Context(), traceInfo)
+
 			if g.verbose {
-				slog.Info("received message", "adapter", adapter.Type(),
-					"sender_id", rawMsg.SenderId,
-					"message", rawMsg.Content,
-					"chat_id", rawMsg.ChatId,
-					"attachements", len(rawMsg.Attachments))
+				slog.InfoContext(taskCtx, "received message",
+					slog.String("sender_id", rawMsg.SenderId),
+					slog.Int("content_len", len(rawMsg.Content)),
+					slog.Int("attachments", len(rawMsg.Attachments)))
 			}
 
 			// check for control commands first
@@ -212,8 +225,8 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 				Attachments: attachments,
 			}
 
-			// create cancellable context for this task
-			taskCtx, taskCancel := context.WithCancel(rawMsg.Context())
+			// create cancellable context for this task (with trace info)
+			taskCtx, taskCancel := context.WithCancel(taskCtx)
 
 			// store cancel function for /stop command
 			g.runningMu.Lock()
@@ -306,6 +319,10 @@ func (e *msgEmitter) EmitDone() {
 func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 	chatId := task.ChatId()
 
+	// Create trace info for cron task
+	traceInfo := trace.NewTraceInfo("cron", chatId, "")
+	ctx = trace.WithTrace(ctx, traceInfo)
+
 	userMessage := &agent.UserMessage{
 		Channel: "cron",
 		ChatId:  chatId,
@@ -315,7 +332,7 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 
 	cronsAgent := g.agents[config.CronsAgentName]
 	result := cronsAgent.Ask(ctx, userMessage)
-	slog.Info("cron task executed", "name", task.Name)
+	slog.InfoContext(ctx, "cron task executed", slog.String("name", task.Name))
 
 	// deliver result if configured
 	if !task.Deliver {
@@ -324,7 +341,7 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 
 	adapter, ok := g.adapters[task.DeliverChannel]
 	if !ok {
-		slog.Error("adapter not found for cron task delivery", "name", task.Name, "channel", task.DeliverChannel)
+		slog.ErrorContext(ctx, "adapter not found for cron task delivery", slog.String("name", task.Name), slog.String("channel", task.DeliverChannel.String()))
 		return
 	}
 
@@ -335,8 +352,8 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 		ChatId:     chatId,
 		Content:    result,
 	}:
-		slog.Info("cron task result delivered", "name", task.Name, "to", task.DeliverTo)
+		slog.InfoContext(ctx, "cron task result delivered", slog.String("name", task.Name), slog.String("to", task.DeliverTo))
 	default:
-		slog.Warn("failed to deliver cron task result", "name", task.Name)
+		slog.WarnContext(ctx, "failed to deliver cron task result", slog.String("name", task.Name))
 	}
 }

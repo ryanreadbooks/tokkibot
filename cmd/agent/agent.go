@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/ryanreadbooks/tokkibot/agent"
@@ -76,8 +77,11 @@ func init() {
 }
 
 func runAgentOnce(ctx context.Context, message string) error {
+	slog.Info("[cmd/agent] running one-time agent", slog.String("agent", agentName), slog.Int("message_len", len(message)))
+
 	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
 	if err != nil {
+		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))
 		return fmt.Errorf("failed to create gateway: %w", err)
 	}
 
@@ -101,8 +105,11 @@ func runAgentOnce(ctx context.Context, message string) error {
 }
 
 func runAgent(ctx context.Context) error {
+	slog.Info("[cmd/agent] starting interactive agent", slog.String("agent", agentName), slog.String("resume_session", resumeSessionChatId))
+
 	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
 	if err != nil {
+		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))
 		return fmt.Errorf("failed to create gateway: %w", err)
 	}
 
@@ -111,6 +118,7 @@ func runAgent(ctx context.Context) error {
 	} else {
 		agentChatId = resumeSessionChatId
 	}
+	slog.Info("[cmd/agent] session initialized", slog.String("chat_id", agentChatId))
 
 	cliAdapter := cliadapter.NewAdapter(cliadapter.CLIConfig{
 		ChatID: agentChatId,

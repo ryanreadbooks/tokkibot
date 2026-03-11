@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -76,8 +77,11 @@ func (e *ConfirmationRequiredError) Error() string {
 func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
 	name, args := bash.ParseCommand(input.Command)
 	if name == "" {
+		slog.WarnContext(ctx, "[tool/shell] empty command blocked")
 		return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
 	}
+
+	slog.InfoContext(ctx, "[tool/shell] executing command", slog.String("command", name), slog.String("working_dir", input.WorkingDir))
 
 	ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
 	defer cancel()
@@ -88,17 +92,23 @@ func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput)
 		cmd.Dir = cleanWd
 	}
 
+	startTime := time.Now()
 	output, err := cmd.CombinedOutput()
+	duration := time.Since(startTime).Milliseconds()
+
 	if err != nil {
+		slog.WarnContext(ctx, "[tool/shell] command failed", slog.String("command", name), slog.Int64("duration_ms", duration), slog.Any("error", err))
 		return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
 	}
 
 	outputStr := string(output)
+	slog.InfoContext(ctx, "[tool/shell] command completed", slog.String("command", name), slog.Int64("duration_ms", duration), slog.Int("output_len", len(outputStr)))
 
 	// truncate output
 	if len(outputStr) > maxAllowedShellOutputLen {
 		more := len(output) - maxAllowedShellOutputLen
 		outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
+		slog.DebugContext(ctx, "[tool/shell] output truncated", slog.Int("truncated_chars", more))
 	}
 
 	return string(output), nil
@@ -108,14 +118,16 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 	input.Command = strings.TrimSpace(input.Command)
 	// Check if command is completely blocked
 	if checkCommandBlocked(input.Command) {
+		slog.WarnContext(ctx, "[tool/shell] dangerous command blocked", slog.String("command", input.Command))
 		return wrapShellError(errDangerousCommand, shellBlockedTag)
 	}
 
 	// Check if command needs user confirmation
 	if checkCommandNeedsConfirmation(input.Command) {
+		slog.InfoContext(ctx, "[tool/shell] command requires confirmation", slog.String("command", input.Command))
 		confirmer, ok := tool.GetConfirmer(ctx)
 		if !ok {
-			// No confirmer available, reject by default
+			slog.WarnContext(ctx, "[tool/shell] no confirmer available, rejecting command")
 			return wrapShellError(errConfirmNeeded, shellConfirmNeededTag)
 		}
 
@@ -129,6 +141,7 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 			Command:     input.Command,
 		})
 		if err != nil {
+			slog.ErrorContext(ctx, "[tool/shell] confirmation request failed", slog.Any("error", err))
 			return wrapShellError(fmt.Errorf("confirmation failed: %w", err), shellConfirmNeededTag)
 		}
 
@@ -137,8 +150,10 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 			if resp.Reason != "" {
 				reason = resp.Reason
 			}
+			slog.InfoContext(ctx, "[tool/shell] command rejected by user", slog.String("reason", reason))
 			return wrapShellError(fmt.Errorf("command rejected: %s", reason), shellConfirmNeededTag)
 		}
+		slog.InfoContext(ctx, "[tool/shell] command confirmed by user")
 	}
 
 	return nil
