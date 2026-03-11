@@ -115,7 +115,7 @@ func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMe
 	defer emitter.EmitDone()
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
-		emitter.EmitContent(-1, err.Error(), "")
+		emitter.EmitContent(&EmittedContent{Round: -1, Content: err.Error()})
 		return
 	}
 
@@ -127,7 +127,7 @@ mainLoop:
 	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
-			emitter.EmitContent(curIter, formatCancelledError(ctx), "")
+			emitter.EmitContent(&EmittedContent{Round: curIter, Content: formatCancelledError(ctx)})
 			break mainLoop
 		default:
 		}
@@ -142,7 +142,7 @@ mainLoop:
 
 		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
-			emitter.EmitContent(curIter, err.Error(), "")
+			emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 			break
 		}
 		// call llm the stream way
@@ -154,9 +154,15 @@ mainLoop:
 		)
 
 		// accumluate content and reasoning content
+		thinkingEnabled := llmReq.ThinkingEnabled()
 		wg.Go(func() {
 			for content := range streamPacked.Content {
-				emitter.EmitContent(curIter, content.Content, content.ReasoningContent)
+				emitter.EmitContent(&EmittedContent{
+					Round:            curIter,
+					Content:          content.Content,
+					ReasoningContent: content.ReasoningContent,
+					Metadata:         EmittedReasoningContentMetadata{ThinkingEnabled: thinkingEnabled},
+				})
 				contentBuilder.WriteString(content.Content)
 				reasoningContentBuilder.WriteString(content.ReasoningContent)
 				if content.ReasoningSignature != "" {
@@ -216,7 +222,7 @@ mainLoop:
 			},
 		})
 		if err != nil {
-			emitter.EmitContent(curIter, err.Error(), "")
+			emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 			break
 		}
 
@@ -228,7 +234,7 @@ mainLoop:
 		// even if ctx is cancelled, we need to complete the tool call sequence
 		for _, tcr := range dstTcs {
 			if err := a.contextManager.AppendToolResult(userMsg, &tcr.tc, tcr.result); err != nil {
-				emitter.EmitContent(curIter, err.Error(), "")
+				emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 				break mainLoop
 			}
 		}

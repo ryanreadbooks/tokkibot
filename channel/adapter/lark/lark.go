@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
+	// "github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/httpx"
@@ -285,11 +287,12 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 
 	// stream state for callbacks (init is delayed to first onContent)
 	state := &larkStreamState{
-		adapter:   a,
-		ctx:       sourceCtx,
-		messageId: messageId,
-		elementId: "markdown_1",
-		seq:       1,
+		adapter:                   a,
+		ctx:                       sourceCtx,
+		messageId:                 messageId,
+		contentElementId:          "markdown_1",
+		reasoningContentElementId: "reasoning_markdown_1",
+		seq:                       1,
 	}
 
 	incomingMsg := &model.IncomingMessage{
@@ -327,7 +330,12 @@ type larkStreamState struct {
 	adapter   *LarkAdapter
 	ctx       context.Context
 	messageId string
-	elementId string
+
+	thinkingFinished atomic.Bool
+	thinkingEnabled  bool
+
+	reasoningContentElementId string
+	contentElementId          string
 
 	initOnce                sync.Once
 	mu                      sync.Mutex
@@ -339,13 +347,20 @@ type larkStreamState struct {
 	streamSendEnabled       bool
 	shouldRecallCardMessage bool
 
-	dirty      bool
-	lastSeqLen int
-	stopCh     chan struct{}
+	dirty                bool
+	lastSeqLen           int
+	lastReasoningSeqLen  int
+	stopCh               chan struct{}
 }
 
-func (s *larkStreamState) init() {
-	cardId, err := s.adapter.createCardEntityForStream(s.ctx, s.elementId)
+func (s *larkStreamState) init(thinkingEnaled bool) {
+	s.thinkingEnabled = thinkingEnaled
+	// we have to create the card entity first for later streaming update
+	cardId, err := s.adapter.createCardEntityForStream(s.ctx,
+		s.contentElementId,
+		s.reasoningContentElementId,
+		thinkingEnaled,
+	)
 	slog.InfoContext(s.ctx, "created card entity for stream", "card_id", cardId, "error", err)
 	if err == nil {
 		replyMessageId, err := s.adapter.replyInteractiveCardMessage(s.ctx, s.messageId, cardId)
@@ -387,32 +402,62 @@ func (s *larkStreamState) flush() {
 	}
 
 	content := s.contentBuilder.String()
-	if len(content) == s.lastSeqLen {
+	reasoningContent := s.reasoningContentBuilder.String()
+
+	contentChanged := len(content) != s.lastSeqLen
+	reasoningChanged := len(reasoningContent) != s.lastReasoningSeqLen
+	if !contentChanged && !reasoningChanged {
 		return
 	}
 
-	err := s.adapter.updateCardEntityForStream(s.ctx, s.cardId, s.elementId, content, s.seq)
-	if err != nil {
-		s.shouldRecallCardMessage = true
-		s.streamSendEnabled = false
-		return
+	if s.thinkingEnabled && reasoningChanged && len(reasoningContent) > 0 {
+		s.adapter.updateCardEntityForStream(s.ctx,
+			s.cardId, s.reasoningContentElementId,
+			reasoningContent,
+			s.seq)
+		s.seq++
+		s.lastReasoningSeqLen = len(reasoningContent)
 	}
-	s.seq++
-	s.lastSeqLen = len(content)
+
+	// if finished thinking update element
+	if s.thinkingEnabled && s.thinkingFinished.Load() {
+		s.adapter.patchThinkingElementToFinished(s.ctx, s.cardId, s.seq)
+		s.seq++
+	}
+
+	if contentChanged && len(content) > 0 {
+		err := s.adapter.updateCardEntityForStream(s.ctx, s.cardId, s.contentElementId, content, s.seq)
+		if err != nil {
+			s.shouldRecallCardMessage = true
+			s.streamSendEnabled = false
+			return
+		}
+		s.seq++
+		s.lastSeqLen = len(content)
+	}
+
 	s.dirty = false
 }
 
 func (s *larkStreamState) onContent(content *model.StreamContent) {
-	s.initOnce.Do(s.init)
+	s.initOnce.Do(func() { s.init(content.ThinkingEnabled) })
 
+	oldContent := s.contentBuilder.String()
 	s.mu.Lock()
 	s.contentBuilder.WriteString(content.Content)
 	s.reasoningContentBuilder.WriteString(content.ReasoningContent)
 	s.dirty = true
-	pendingLen := s.contentBuilder.Len() - s.lastSeqLen
+	pendingContentLen := s.contentBuilder.Len() - s.lastSeqLen
+	pendingReasoningLen := s.reasoningContentBuilder.Len() - s.lastReasoningSeqLen
 	s.mu.Unlock()
 
-	if pendingLen >= streamFlushThreshold {
+	newContent := s.contentBuilder.String()
+	// 如果一直没有内容 然后突然有内容了 并且是在thinking enabled情况下 则认为thinking finished
+	if oldContent == "" && newContent != "" && content.ThinkingEnabled {
+		s.thinkingFinished.Store(true)
+	}
+
+	if pendingContentLen >= streamFlushThreshold || pendingReasoningLen >= streamFlushThreshold {
 		s.flush()
 	}
 }
@@ -422,6 +467,7 @@ func (s *larkStreamState) onDone() {
 		close(s.stopCh)
 	}
 
+	s.thinkingFinished.Store(true)
 	s.flush()
 
 	s.mu.Lock()

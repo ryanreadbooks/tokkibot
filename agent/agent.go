@@ -175,9 +175,20 @@ func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
 	return a.handleIncomingMessage(ctx, msg)
 }
 
+type EmittedReasoningContentMetadata struct {
+	ThinkingEnabled bool
+}
+
+type EmittedContent struct {
+	Round            int
+	Content          string
+	ReasoningContent string
+	Metadata         EmittedReasoningContentMetadata
+}
+
 // StreamEmitter is the interface for emitting stream events
 type StreamEmitter interface {
-	EmitContent(round int, content, reasoning string)
+	EmitContent(content *EmittedContent)
 	EmitTool(round int, name, args string)
 	EmitDone()
 }

@@ -20,6 +20,10 @@ type Request struct {
 	Thinking *Thinking
 }
 
+func (r *Request) ThinkingEnabled() bool {
+	return r.Thinking != nil && r.Thinking.Type == ThinkingTypeEnabled
+}
+
 func NewRequest(model string, messages []param.Message) *Request {
 	return &Request{
 		Model:       model,

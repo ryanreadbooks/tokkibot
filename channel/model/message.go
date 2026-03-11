@@ -10,6 +10,7 @@ type StreamContent struct {
 	Round            int
 	Content          string
 	ReasoningContent string
+	ThinkingEnabled  bool
 }
 
 type StreamTool struct {

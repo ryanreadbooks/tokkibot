@@ -11,10 +11,75 @@ import (
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
 )
 
-func (a *LarkAdapter) createCardEntityForStream(ctx context.Context, elementId string) (string, error) {
-	c := card.NewCardV2Builder().
-		AppendBodyElement(card.NewBodyMarkdownElement("").WithElementId(elementId)). // placeholder for streaming
+const (
+	thinkingElementId = "thinking_element_1"
+)
+
+var patchThinkingElementToFinishedAction = fmt.Sprintf(`
+[
+	{
+		"action": "partial_update_element",
+		"params": {
+			"element_id": "%s",
+			"partial_element": {
+				"expanded": false,
+				"header": {
+					"title": {
+						"content": "💡完成思考",
+						"tag": "plain_text"
+					}
+				}
+			}
+		}
+	}	
+]`, thinkingElementId)
+
+func constructThinkingElement(elementId string, headerTitle string, expanded bool) *card.CollapsiblePanelElement {
+	thinkingElement := card.NewCollapsiblePanelElement(thinkingElementId)
+	thinkingElement.WithHeaderTitle(headerTitle)
+	thinkingElement.WithExpanded(expanded)
+	thinkingElement.WithBorder(&card.CollapsiblePanelBorder{
+		Color:        "grey-200",
+		CornerRadius: "5px",
+	})
+	markdownElement := card.NewBodyMarkdownElement("") // placeholder
+	markdownElement.WithElementId(elementId)
+	thinkingElement.AppendElement(markdownElement)
+	thinkingElement.WithBackgroundColor("grey")
+	return thinkingElement
+}
+
+func (a *LarkAdapter) patchThinkingElementToFinished(ctx context.Context, cardId string, seq int) error {
+	body := cardkitv1.NewBatchUpdateCardReqBodyBuilder().
+		Uuid(uuid.NewString()).
+		Sequence(seq).
+		Actions(patchThinkingElementToFinishedAction).
 		Build()
+
+	req := cardkitv1.NewBatchUpdateCardReqBuilder().CardId(cardId).Body(body).Build()
+	resp, err := a.cli.Cardkit.V1.Card.BatchUpdate(ctx, req)
+	if err != nil {
+		return err
+	}
+	if !resp.Success() {
+		return fmt.Errorf("failed to patch thinking element to finished: %s", resp.ErrorResp())
+	}
+	return nil
+}
+
+func (a *LarkAdapter) createCardEntityForStream(ctx context.Context,
+	contentElementId string,
+	reasoningContentElementId string,
+	thinkingEnabled bool,
+) (string, error) {
+	bd := card.NewCardV2Builder()
+	if thinkingEnabled {
+		bd.AppendBodyElement(constructThinkingElement(reasoningContentElementId, "💭思考中...", true))
+	}
+
+	c := bd.AppendBodyElement(
+		card.NewBodyMarkdownElement("").WithElementId(contentElementId),
+	).Build()
 	c.Config = &card.Config{
 		StreamingMode: true,
 		StreamingConfig: &card.StreamingConfig{

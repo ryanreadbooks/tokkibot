@@ -281,11 +281,12 @@ type msgEmitter struct {
 	msg *chmodel.IncomingMessage
 }
 
-func (e *msgEmitter) EmitContent(round int, content, reasoning string) {
+func (e *msgEmitter) EmitContent(content *agent.EmittedContent) {
 	e.msg.EmitContent(&chmodel.StreamContent{
-		Round:            round,
-		Content:          content,
-		ReasoningContent: reasoning,
+		Round:            content.Round,
+		Content:          content.Content,
+		ReasoningContent: content.ReasoningContent,
+		ThinkingEnabled:  content.Metadata.ThinkingEnabled,
 	})
 }
 
