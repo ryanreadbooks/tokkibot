@@ -11,7 +11,11 @@ import (
 
 const (
 	MainAgentName  = "main"
-	CronsAgentName = "__crons"
+	CronsAgentName = "__cron"
+)
+
+const (
+	sessionDirName = "sessions"
 )
 
 var (
@@ -80,7 +84,15 @@ func GetAgentWorkspaceDir(agentName string) string {
 // GetAgentSessionsDir returns the sessions directory for the specified agent.
 // Path: ~/.tokkibot/sessions/{agentName}
 func GetAgentSessionsDir(agentName string) string {
-	return filepath.Join(GetHomeDir(), "sessions", agentName)
+	return filepath.Join(GetAgentWorkspaceDir(agentName), sessionDirName)
+}
+
+func GetSubAgentSessionsDir(mainAgent, subAgent string) string {
+	return filepath.Join(GetAgentWorkspaceDir(mainAgent), "subagents", subAgent, sessionDirName)
+}
+
+func GetCronSessionsDir() string {
+	return filepath.Join(GetHomeDir(), sessionDirName)
 }
 
 // GetProjectDir returns the current working directory (project directory)

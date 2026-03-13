@@ -11,11 +11,11 @@ import (
 )
 
 type CronInput struct {
-	Action   string `json:"action"             jsonschema:"description=Action to perform,enum=schedule,enum=list,enum=delete"`
-	Name     string `json:"name,omitempty"     jsonschema:"description=Task name (required for schedule/delete)"`
+	Action   string `json:"action"              jsonschema:"description=Action to perform,enum=schedule,enum=list,enum=delete"`
+	Name     string `json:"name,omitempty"      jsonschema:"description=Task name (required for schedule/delete)"`
 	CronExpr string `json:"cron_expr,omitempty" jsonschema:"description=Cron expression for schedule action (5 fields: minute hour day month weekday). Examples: '0 9 * * *' (daily 9am)\\, '*/5 * * * *' (every 5 min)\\, '0 0 * * 1' (every Monday)"`
-	Prompt   string `json:"prompt,omitempty"   jsonschema:"description=The prompt/instruction to execute when triggered (required for schedule)"`
-	OneShot  bool   `json:"one_shot,omitempty" jsonschema:"description=If true\\, task runs once then auto-disables (only for schedule action)"`
+	Prompt   string `json:"prompt,omitempty"    jsonschema:"description=The prompt/instruction to execute when triggered (required for schedule)"`
+	OneShot  bool   `json:"one_shot,omitempty"  jsonschema:"description=If true\\, task runs once then auto-disables (only for schedule action)"`
 }
 
 func Cron() tool.Invoker {

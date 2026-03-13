@@ -200,13 +200,15 @@ func toTool(p *param.Tool) openai.ChatCompletionToolUnionParam {
 	return tool
 }
 
-func toChatCompletionNewParams(req *schema.Request) (openai.ChatCompletionNewParams, []option.RequestOption) {
+func toChatCompletionNewParams(req *schema.Request, useStream bool) (openai.ChatCompletionNewParams, []option.RequestOption) {
 	params := openai.ChatCompletionNewParams{
 		Model: req.Model,
 		N:     openaiparam.NewOpt(max(1, req.N)),
-		StreamOptions: openai.ChatCompletionStreamOptionsParam{
+	}
+	if useStream {
+		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openaiparam.NewOpt(true),
-		},
+		}
 	}
 
 	if req.Temperature != -1 {
@@ -282,7 +284,7 @@ func toChoices(choices []openai.ChatCompletionChoice) []schema.Choice {
 }
 
 func (o *OpenAI) ChatCompletion(ctx context.Context, req *schema.Request) (*schema.Response, error) {
-	params, opts := toChatCompletionNewParams(req)
+	params, opts := toChatCompletionNewParams(req, false)
 	resp, err := o.client.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat completion new: %w", err)
@@ -359,7 +361,7 @@ func toStreamResponseChunk(cur openai.ChatCompletionChunk) *schema.StreamRespons
 }
 
 func (o *OpenAI) ChatCompletionStream(ctx context.Context, req *schema.Request) <-chan *schema.StreamResponseChunk {
-	params, opts := toChatCompletionNewParams(req)
+	params, opts := toChatCompletionNewParams(req, true)
 	stream := o.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 	ch := make(chan *schema.StreamResponseChunk, 16) // this should be buffered
 

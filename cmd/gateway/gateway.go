@@ -46,16 +46,16 @@ func initGateway(ctx context.Context) error {
 		adapter, err := createAdapter(match.Channel, match.Account)
 		if err != nil {
 			slog.Warn("failed to create adapter for agent binding",
-				slog.String("agent", agentEntry.Id),
+				slog.String("agent", agentEntry.Name),
 				slog.String("channel", match.Channel),
 				slog.String("account", match.Account),
 				slog.Any("error", err))
 			continue
 		}
 
-		g.AddAdapter(adapter, agentEntry.Id)
+		g.AddAdapter(adapter, agentEntry.Name)
 		slog.Info("adapter created from binding",
-			slog.String("agent", agentEntry.Id),
+			slog.String("agent", agentEntry.Name),
 			slog.String("channel", match.Channel),
 			slog.String("account", match.Account))
 	}

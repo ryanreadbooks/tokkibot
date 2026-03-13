@@ -11,10 +11,17 @@ import (
 // PrepareOption allows customizing agent preparation
 type PrepareOption func(*AgentConfig)
 
-// WithWorkspaceOverride sets a custom workspace dir (e.g. __crons uses main's workspace)
+// WithWorkspaceOverride sets a custom workspace dir (e.g. __cron uses main's workspace)
 func WithWorkspaceOverride(workspace string) PrepareOption {
 	return func(c *AgentConfig) {
-		c.WorkspaceOverride = workspace
+		c.WorkspaceDir = workspace
+	}
+}
+
+// WithSessionDirOverride sets a custom session dir (e.g. __cron uses global sessions dir)
+func WithSessionDirOverride(sessionDir string) PrepareOption {
+	return func(c *AgentConfig) {
+		c.SessionDir = sessionDir
 	}
 }
 
@@ -23,7 +30,7 @@ func Prepare(ctx context.Context, agentName string, opts ...PrepareOption) (ag *
 
 	entry := config.GetAgentEntry(agentName)
 	if entry == nil {
-		// For virtual agents (e.g. __crons), fall back to main agent's provider settings
+		// For virtual agents (e.g. __cron), fall back to main agent's provider settings
 		entry = config.GetAgentEntry(config.MainAgentName)
 		if entry == nil {
 			return nil, fmt.Errorf("agent %s not found in config and no main agent fallback", agentName)

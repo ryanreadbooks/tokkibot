@@ -13,4 +13,5 @@ const (
 	ToolNameCron         = "cron"
 	ToolNameTodoWrite    = "todo_write"
 	ToolNameUseSkill     = "use_skill"
+	ToolNameSubagent     = "subagent"
 )

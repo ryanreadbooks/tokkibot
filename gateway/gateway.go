@@ -74,7 +74,7 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	if len(option.agentNames) == 0 {
 		// read all agent ids from config
 		for _, entry := range config.GetConfig().Agents {
-			option.agentNames = append(option.agentNames, entry.Id)
+			option.agentNames = append(option.agentNames, entry.Name)
 		}
 	}
 	if len(option.agentNames) == 0 {
@@ -90,9 +90,10 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 		agents[name] = ag
 	}
 
-	// prepare __crons agent (uses main's workspace, isolated sessions)
+	// prepare __cron agent (uses main's workspace, isolated sessions)
 	cronsAg, err := agent.Prepare(ctx, config.CronsAgentName,
 		agent.WithWorkspaceOverride(config.GetAgentWorkspaceDir(config.MainAgentName)),
+		agent.WithSessionDirOverride(config.GetCronSessionsDir()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare crons agent: %w", err)
@@ -315,7 +316,7 @@ func (e *msgEmitter) EmitDone() {
 	e.msg.EmitDone()
 }
 
-// handleCronTask handles a triggered cron task using the __crons virtual agent
+// handleCronTask handles a triggered cron task using the __cron virtual agent
 func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 	chatId := task.ChatId()
 

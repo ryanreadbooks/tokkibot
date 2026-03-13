@@ -55,6 +55,8 @@ func FormatToolCallArgs(name string, argsJSON string, maxLen int) string {
 		return formatShellArgs(args)
 	case tools.ToolNameTodoWrite:
 		return formatTodoWriteArgs(args)
+	case tools.ToolNameSubagent:
+		return formatSubagentArgs(args)
 	default:
 		return formatGenericArgs(args, maxLen)
 	}
@@ -180,6 +182,51 @@ func formatTodoWriteArgs(args map[string]any) string {
 
 	sb.WriteString(fmt.Sprintf("  (%d/%d completed)", completed, len(todos)))
 	return sb.String()
+}
+
+func formatSubagentArgs(args map[string]any) string {
+	action, _ := args["action"].(string)
+
+	switch action {
+	case "spawn":
+		name, _ := args["name"].(string)
+		task, _ := args["task"].(string)
+		bg, _ := args["background"].(bool)
+
+		var sb strings.Builder
+		if bg {
+			sb.WriteString("🚀 Spawn (background)")
+		} else {
+			sb.WriteString("🚀 Spawn")
+		}
+		if name != "" {
+			fmt.Fprintf(&sb, " [%s]", name)
+		}
+		if task != "" {
+			sb.WriteString("\n")
+			sb.WriteString(truncateString(task, 80))
+		}
+		return sb.String()
+
+	case "get_result":
+		namesRaw, _ := args["get_names"].([]any)
+		waitMode, _ := args["wait_mode"].(string)
+		if waitMode == "" {
+			waitMode = "all"
+		}
+
+		names := make([]string, 0, len(namesRaw))
+		for _, n := range namesRaw {
+			if s, ok := n.(string); ok {
+				names = append(names, s)
+			}
+		}
+
+		return fmt.Sprintf("📥 Get results (wait: %s)\n%s", waitMode, strings.Join(names, ", "))
+
+	default:
+		return fmt.Sprintf("❓ Unknown action: %s", action)
+	}
 }
 
 func formatGenericArgs(args map[string]any, maxLen int) string {

@@ -37,8 +37,11 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		ChatId:  userMsg.ChatId,
 	}
 
+	a.loopState.setState(userMsg.Channel, userMsg.ChatId)
+	defer a.loopState.unsetState(userMsg.Channel, userMsg.ChatId)
+
 	var lastResponse *schema.Response
-	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
+	for curIter := 1; curIter <= a.cfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
 			slog.WarnContext(ctx, "[agent] message handling cancelled", slog.Int("iteration", curIter))
@@ -52,27 +55,21 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 			return fmt.Sprintf("(failed to build llm message request: %s)", err.Error())
 		}
 
-		slog.DebugContext(ctx, "[agent] calling LLM",
-			slog.Int("iteration", curIter),
-			slog.String("model", llmReq.Model),
-			slog.Int("messages_count", len(llmReq.Messages)),
-			slog.Int("tools_count", len(llmReq.Tools)))
-
 		startTime := time.Now()
 		llmResp, err := a.llm.ChatCompletion(ctx, llmReq)
 		if err != nil {
-			slog.ErrorContext(ctx, "[agent] LLM call failed", slog.Int("iteration", curIter), slog.Int64("duration_ms", time.Since(startTime).Milliseconds()), slog.Any("error", err))
+			slog.ErrorContext(ctx, "[agent] LLM call failed",
+				slog.Int("iteration", curIter),
+				slog.Int64("duration_ms", time.Since(startTime).Milliseconds()),
+				slog.Any("error", err),
+				slog.String("model", llmReq.Model),
+				slog.Int("messages_count", len(llmReq.Messages)),
+				slog.Int("tools_count", len(llmReq.Tools)),
+			)
 			return fmt.Sprintf("(failed to call llm: %s)", err.Error())
 		}
 
-		slog.InfoContext(ctx, "[agent] LLM response received",
-			slog.Int("iteration", curIter),
-			slog.Int64("duration_ms", time.Since(startTime).Milliseconds()),
-			slog.String("finish_reason", string(llmResp.FirstChoice().FinishReason)),
-			slog.Int("tool_calls_count", len(llmResp.FirstChoice().Message.ToolCalls)))
-
 		lastResponse = llmResp
-
 		choice := llmResp.FirstChoice()
 		if err := a.contextManager.AppendAssistantMessage(userMsg, &choice.Message); err != nil {
 			slog.ErrorContext(ctx, "[agent] failed to append assistant message", slog.Any("error", err))
@@ -80,7 +77,13 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		}
 
 		if choice.IsStopped() {
-			slog.InfoContext(ctx, "[agent] conversation completed", slog.Int("iterations", curIter), slog.Int("response_len", len(choice.Message.Content)))
+			slog.InfoContext(ctx, "[agent] conversation completed",
+				slog.Int("iterations", curIter),
+				slog.Int("response_len", len(choice.Message.Content)),
+				slog.String("model", llmReq.Model),
+				slog.Int("messages_count", len(llmReq.Messages)),
+				slog.Int("tools_count", len(llmReq.Tools)),
+			)
 			return choice.Message.Content
 		}
 
@@ -93,9 +96,19 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 				}
 			}
 		}
+
+		// auto-push completed subagent results
+		if subResults := a.receiveSubAgentResults(); subResults != "" {
+			a.contextManager.AppendContextUserMessage(&UserMessage{
+				Channel: userMsg.Channel,
+				ChatId:  userMsg.ChatId,
+				Created: time.Now().Unix(),
+				Content: subResults,
+			})
+		}
 	}
 
-	slog.WarnContext(ctx, "[agent] max iterations reached", slog.Int("max_iteration", a.c.MaxIteration))
+	slog.WarnContext(ctx, "[agent] max iterations reached", slog.Int("max_iteration", a.cfg.MaxIteration))
 	if lastResponse != nil {
 		return fmt.Sprintf("(max iterations reached, last response: %s)",
 			lastResponse.FirstChoice().Message.Content)
@@ -147,8 +160,12 @@ func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMe
 		Channel: userMsg.Channel,
 		ChatId:  userMsg.ChatId,
 	}
+
+	a.loopState.setState(userMsg.Channel, userMsg.ChatId)
+	defer a.loopState.unsetState(userMsg.Channel, userMsg.ChatId)
+
 mainLoop:
-	for curIter := 1; curIter <= a.c.MaxIteration; curIter++ {
+	for curIter := 1; curIter <= a.cfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
 			emitter.EmitContent(&EmittedContent{Round: curIter, Content: formatCancelledError(ctx)})
@@ -261,6 +278,16 @@ mainLoop:
 				emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 				break mainLoop
 			}
+		}
+
+		// auto-push completed subagent results
+		if subResults := a.receiveSubAgentResults(); subResults != "" {
+			a.contextManager.AppendContextUserMessage(&UserMessage{
+				Channel: userMsg.Channel,
+				ChatId:  userMsg.ChatId,
+				Created: time.Now().Unix(),
+				Content: subResults,
+			})
 		}
 	}
 }

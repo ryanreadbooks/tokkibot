@@ -16,3 +16,6 @@ var UseSkillDescription string
 
 //go:embed cron.md
 var CronDescription string
+
+//go:embed subagent.md
+var SubagentDescription string

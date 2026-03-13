@@ -24,6 +24,25 @@ import (
 
 var _ adapter.Adapter = (*LarkAdapter)(nil)
 
+// slogAdapter adapts slog to larkcore.Logger interface
+type slogAdapter struct{}
+
+func (s *slogAdapter) Debug(ctx context.Context, args ...any) {
+	slog.DebugContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
+}
+
+func (s *slogAdapter) Info(ctx context.Context, args ...any) {
+	slog.InfoContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
+}
+
+func (s *slogAdapter) Warn(ctx context.Context, args ...any) {
+	slog.WarnContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
+}
+
+func (s *slogAdapter) Error(ctx context.Context, args ...any) {
+	slog.ErrorContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
+}
+
 // feishu
 type LarkAdapter struct {
 	cli   *lark.Client
@@ -47,10 +66,14 @@ type LarkConfig struct {
 func NewAdapter(cfg LarkConfig) *LarkAdapter {
 	eventDispatcher := dispatcher.NewEventDispatcher("", "")
 
+	// Create slog-based logger for lark SDK
+	logger := &slogAdapter{}
+
 	wscli := ws.NewClient(
 		cfg.AppId,
 		cfg.AppSecret,
 		ws.WithLogLevel(larkcore.LogLevelInfo),
+		ws.WithLogger(logger),
 		ws.WithEventHandler(eventDispatcher),
 		ws.WithAutoReconnect(true),
 	)
@@ -58,6 +81,7 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 		cfg.AppId,
 		cfg.AppSecret,
 		lark.WithLogLevel(larkcore.LogLevelWarn),
+		lark.WithLogger(logger),
 		lark.WithHttpClient(httpx.NewRetryClient(httpx.DefaultRetryConfig())),
 	)
 	adapter := &LarkAdapter{

@@ -6,11 +6,6 @@ type UserInput struct {
 	Content     string // user input content
 	Created     int64  // created at unix timestamp
 	Attachments []*UserInputAttachment
-	Control     UserInputControl
-}
-
-func (i *UserInput) HasControl() bool {
-	return validCommands[i.Control.Command]
 }
 
 type AttachmentType string
@@ -28,22 +23,4 @@ type UserInputAttachment struct {
 	Type     AttachmentType
 	Data     []byte
 	MimeType string
-}
-
-type UserInputControl struct {
-	Command ControlCommand
-}
-
-type ControlCommand string
-
-const (
-	ControlCommandStop ControlCommand = "/stop"
-	ControlCommandNew  ControlCommand = "/new"
-	ControlCommandHelp ControlCommand = "/help"
-)
-
-var validCommands = map[ControlCommand]bool{
-	ControlCommandStop: true,
-	ControlCommandNew:  true,
-	ControlCommandHelp: true,
 }

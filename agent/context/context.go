@@ -40,20 +40,22 @@ type ContextManager struct {
 	agentWorkspace string // agent's workspace dir for prompts and memory
 
 	systemPromptsTemplate string // raw template, not rendered
-	systemPromptsCache    string // rendered cache for display
 	systemPromptsMu       sync.RWMutex
 
-	historyInjectOnce sync.Once
-	messageList       []param.Message
-	aofLogManager     *session.AOFLogManager
-	contextLogManager *session.ContextLogManager
-	memoryMgr         *MemoryManager
-	skillLoader       *skill.Loader
+	historyInjectOnce  sync.Once
+	contextMessageList []param.Message
+	aofLogManager      *session.AOFLogManager
+	contextLogManager  *session.ContextLogManager
+	memoryMgr          *MemoryManager
+	skillLoader        *skill.Loader
+	systemPrompt       string // when non-empty, used instead of loading from workspace files
 }
 
 type ContextManagerConfig struct {
-	AgentName      string // for session isolation
-	AgentWorkspace string // for prompts and memory
+	AgentName            string // for session isolation
+	AgentWorkspace       string // for prompts and memory
+	SessionDir           string // where session and context logs are stored
+	SystemPromptTemplate string
 }
 
 func NewContextManager(
@@ -62,7 +64,7 @@ func NewContextManager(
 	skillLoader *skill.Loader,
 ) (*ContextManager, error) {
 	sessionCfg := session.LogManagerConfig{
-		Workspace: config.GetAgentSessionsDir(c.AgentName),
+		Workspace: c.SessionDir,
 	}
 	aofLogMgr := session.NewAOFLogManager(ctx, sessionCfg)
 	contextLogMgr := session.NewContextLogManager(ctx, sessionCfg)
@@ -75,6 +77,7 @@ func NewContextManager(
 		contextLogManager: contextLogMgr,
 		memoryMgr:         memoryMgr,
 		skillLoader:       skillLoader,
+		systemPrompt:      c.SystemPromptTemplate,
 	}
 
 	if err := mgr.bootstrapSystemPrompts(); err != nil {
@@ -117,7 +120,7 @@ func (c *ContextManager) renderPrompts(s string) string {
 func (c *ContextManager) bootstrapSystemPrompts() error {
 	// System prompts structure:
 	//
-	// 	system built-in prompts
+	// 	system built-in prompts (or override template for subagents)
 	//
 	//  ---
 	//
@@ -126,25 +129,28 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 	const separator = "\n\n---\n\n"
 
 	prompts := strings.Builder{}
-	prompts.Grow(1024 * len(systemPromptList))
+	prompts.Grow(4096)
 
-	// system built-in prompts from agent workspace
-	for _, promptPath := range systemPromptList {
-		promptPath = filepath.Join(c.agentWorkspace, promptPath)
-		content, err := os.ReadFile(promptPath)
-		if err != nil {
-			return err
-		}
+	if c.systemPrompt != "" {
+		prompts.WriteString(c.systemPrompt)
+	} else {
+		// system built-in prompts from agent workspace
+		for _, promptPath := range systemPromptList {
+			promptPath = filepath.Join(c.agentWorkspace, promptPath)
+			content, err := os.ReadFile(promptPath)
+			if err != nil {
+				return err
+			}
 
-		_, err = prompts.Write(content)
-		if err != nil {
-			return err
-		}
+			_, err = prompts.Write(content)
+			if err != nil {
+				return err
+			}
 
-		// add separator
-		_, err = prompts.WriteString(separator)
-		if err != nil {
-			return err
+			_, err = prompts.WriteString(separator)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -154,7 +160,6 @@ func (c *ContextManager) bootstrapSystemPrompts() error {
 		prompts.WriteString(memoryPrompt)
 	}
 
-	// store raw template, will be rendered on each GetMessageContext call
 	c.systemPromptsTemplate = prompts.String()
 
 	return nil
@@ -175,7 +180,7 @@ func (c *ContextManager) InitFromSessionLogs(channel, chatId string) {
 		history, err = c.aofLogManager.GetLogItems(channel, chatId)
 		if err == nil {
 			for _, msg := range history {
-				c.messageList = append(c.messageList, *msg.Message)
+				c.contextMessageList = append(c.contextMessageList, *msg.Message)
 			}
 		}
 	})
@@ -204,7 +209,7 @@ func (c *ContextManager) appendMessage(
 		return err
 	}
 
-	c.messageList = append(c.messageList, *msgParam)
+	c.contextMessageList = append(c.contextMessageList, *msgParam)
 	return nil
 }
 
@@ -246,11 +251,11 @@ func parseInputAttachments(attachments []*UserInputAttachment) ([]*contentUnionW
 	return params, nil
 }
 
-func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]param.Message, error) {
+func (c *ContextManager) formatUserMessageParam(inMsg *UserInput) (*param.Message, *session.LogItem, error) {
 	// check any attachments
 	unionParamsWithKey, err := parseInputAttachments(inMsg.Attachments)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	logItem := session.LogItem{
@@ -290,22 +295,48 @@ func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]param.Message, e
 		msgParam = param.NewUserMessage(inMsg.Content)
 	}
 
-	logItem.Message = &msgParam
+	return &msgParam, &logItem, nil
+}
 
+func (c *ContextManager) AppendContextUserMessage(inMsg *UserInput) ([]param.Message, error) {
+	msgParam, logItem, err := c.formatUserMessageParam(inMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	logItem.Message = msgParam
 	err = c.appendMessage(
-		inMsg.Channel, inMsg.ChatId, &msgParam,
-		func(aofLog *session.AOFLog, msg *param.Message) error {
-			return aofLog.AddLogItem(logItem)
-		},
-		func(contextLog *session.ContextLog, msg *param.Message) error {
-			return contextLog.AddLogItem(logItem)
-		},
+		inMsg.Channel,
+		inMsg.ChatId,
+		msgParam,
+		nil,
+		func(cl *session.ContextLog, m *param.Message) error { return cl.AddLogItem(*logItem) })
+	if err != nil {
+		return nil, err
+	}
+
+	return c.contextMessageList, nil
+}
+
+func (c *ContextManager) AppendUserMessage(inMsg *UserInput) ([]param.Message, error) {
+	msgParam, logItem, err := c.formatUserMessageParam(inMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	logItem.Message = msgParam
+	err = c.appendMessage(
+		inMsg.Channel,
+		inMsg.ChatId,
+		msgParam,
+		func(aofLog *session.AOFLog, msg *param.Message) error { return aofLog.AddLogItem(*logItem) },
+		func(contextLog *session.ContextLog, msg *param.Message) error { return contextLog.AddLogItem(*logItem) },
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.messageList, nil
+	return c.contextMessageList, nil
 }
 
 // Add a tool call result (usually generated locally) to the message list.

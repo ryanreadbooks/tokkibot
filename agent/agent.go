@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
@@ -47,141 +48,12 @@ type AgentConfig struct {
 
 	ResumeSessionId string
 
-	// WorkspaceOverride allows using a different agent's workspace (e.g. __crons uses main's workspace).
-	// If empty, derived from Name.
-	WorkspaceOverride string
-}
+	WorkspaceDir string // workspace directory
+	SessionDir   string // where session and context logs are stored
 
-type Agent struct {
-	c AgentConfig
-	// The LLM service to use.
-	llm llm.LLM
-
-	toolsMu sync.RWMutex
-	tools   map[string]tool.Invoker
-
-	// The context manager for the agent.
-	contextManager *agcontext.ContextManager
-
-	// skill loader
-	skillLoader *skill.Loader
-
-	cachedReqsMu sync.RWMutex
-	cachedReqs   map[string]*schema.Request
-
-	// mcp
-	mcpLoaded  atomic.Bool
-	mcpManager *tool.McpToolManager
-}
-
-func NewAgent(
-	llm llm.LLM,
-	c AgentConfig,
-) *Agent {
-	slog.Info("[agent] creating new agent",
-		slog.String("name", c.Name),
-		slog.String("provider", c.Provider),
-		slog.String("model", c.Model),
-		slog.Int("max_iteration", c.MaxIteration))
-
-	agentWorkspace := c.WorkspaceOverride
-	if agentWorkspace == "" {
-		agentWorkspace = config.GetAgentWorkspaceDir(c.Name)
-	}
-	slog.Debug("[agent] workspace configured", slog.String("workspace", agentWorkspace))
-
-	skillLoader := skill.NewLoader()
-	if err := skillLoader.Init(agentWorkspace); err != nil {
-		slog.Error("[agent] failed to init skill loader", slog.Any("error", err))
-		os.Exit(1)
-	}
-
-	contextManager, err := agcontext.NewContextManager(
-		c.RootCtx,
-		agcontext.ContextManagerConfig{
-			AgentName:      c.Name,
-			AgentWorkspace: agentWorkspace,
-		},
-		skillLoader,
-	)
-	if err != nil {
-		slog.Error("[agent] failed to create context manager, now exit", slog.Any("error", err))
-		os.Exit(1)
-	}
-
-	// mcp manager
-	mcpManager := tool.NewMcpToolManager()
-	// try to init mcp manager
-	mcpConfig, err := config.GetMcpConfig()
-	mcpLoaded := false
-	if err != nil {
-		slog.Debug("[agent] mcp config not found, mcp tools disabled")
-	} else {
-		mcpLoaded = true
-		mcpManager.Init(c.RootCtx, mcpConfig)
-		slog.Info("[agent] mcp tools loaded", slog.Int("tools_count", len(mcpManager.ListTools())))
-	}
-
-	agent := &Agent{
-		c:              c,
-		tools:          make(map[string]tool.Invoker),
-		contextManager: contextManager,
-		skillLoader:    skillLoader,
-		cachedReqs:     make(map[string]*schema.Request),
-		llm:            llm,
-		mcpManager:     mcpManager,
-	}
-	agent.mcpLoaded.Store(mcpLoaded)
-
-	agent.registerTools(agentWorkspace)
-	slog.Info("[agent] agent created successfully", slog.String("name", c.Name), slog.Int("builtin_tools", len(agent.tools)))
-
-	return agent
-}
-
-// register tools
-func (a *Agent) registerTools(agentWorkspace string) {
-	workspaceReadDir := workspace.GetAllowedReadPaths(agentWorkspace)
-	workspaceWriteDir := workspace.GetAllowedWritePaths(agentWorkspace)
-
-	a.RegisterTool(tools.ReadFile(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
-	a.RegisterTool(tools.WriteFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
-	a.RegisterTool(tools.ListDir(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
-	a.RegisterTool(tools.EditFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
-	a.RegisterTool(tools.LoadRef())
-	a.RegisterTool(tools.Shell())
-	a.RegisterTool(tools.UseSkill(a.skillLoader))
-	a.RegisterTool(tools.WebFetch())
-	a.RegisterTool(tools.Cron())
-	a.RegisterTool(tools.TodoWrite())
-}
-
-func (a *Agent) RegisterTool(tool tool.Invoker) {
-	if tool == nil {
-		return
-	}
-
-	a.toolsMu.Lock()
-	defer a.toolsMu.Unlock()
-
-	if _, ok := a.tools[tool.Info().Name]; ok {
-		slog.Warn("[agent] tool already registered", slog.String("tool_name", tool.Info().Name))
-	} else {
-		a.tools[tool.Info().Name] = tool
-	}
-}
-
-func (a *Agent) Name() string {
-	return a.c.Name
-}
-
-func (a *Agent) providerConfig() config.ProviderConfig {
-	return config.GetConfig().Providers[a.c.Provider]
-}
-
-// Handling incoming message in a blocking way
-func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
-	return a.handleIncomingMessage(ctx, msg)
+	isSpawned              bool
+	doNotAutoRegisterTools bool
+	subagentPrompt         string
 }
 
 type EmittedReasoningContentMetadata struct {
@@ -202,6 +74,198 @@ type StreamEmitter interface {
 	EmitDone()
 }
 
+type loopState struct {
+	mu   sync.Mutex
+	data map[string]struct{}
+
+	fn func(channel, chatId string) string
+}
+
+func (s *loopState) setState(channel, chatId string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[s.fn(channel, chatId)] = struct{}{}
+}
+
+func (s *loopState) unsetState(channel, chatId string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, s.fn(channel, chatId))
+}
+
+func (s *loopState) isStateSet(channel, chatId string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.data[s.fn(channel, chatId)]
+	return ok
+}
+
+type Agent struct {
+	cfg AgentConfig
+	// The LLM service to use.
+	llm llm.LLM
+
+	toolsMu sync.RWMutex
+	tools   map[string]tool.Invoker
+
+	// The context manager for the agent.
+	contextManager *agcontext.ContextManager
+
+	// skill loader
+	skillLoader *skill.Loader
+
+	cachedReqsMu sync.RWMutex
+	cachedReqs   map[string]*schema.Request
+
+	// mcp
+	mcpLoaded  atomic.Bool
+	mcpManager *tool.McpToolManager
+
+	// subagents results storage
+	subAgentResultsMu sync.Mutex
+	subAgentResults   map[string]chan string // name -> result channel
+
+	loopState *loopState
+}
+
+func NewAgent(
+	llm llm.LLM,
+	cfg AgentConfig,
+) *Agent {
+	slog.Info("[agent] creating new agent",
+		slog.Bool("is_spawned", cfg.isSpawned),
+		slog.String("name", cfg.Name),
+		slog.String("provider", cfg.Provider),
+		slog.String("model", cfg.Model),
+		slog.Int("max_iteration", cfg.MaxIteration))
+
+	agentWorkspace := cfg.WorkspaceDir
+	if agentWorkspace == "" {
+		agentWorkspace = config.GetAgentWorkspaceDir(cfg.Name) // default workspace
+		cfg.WorkspaceDir = agentWorkspace
+	}
+	slog.Debug("[agent] workspace configured", slog.String("workspace", agentWorkspace))
+
+	// Set default session directory if not provided
+	sessionDir := cfg.SessionDir
+	if sessionDir == "" {
+		sessionDir = filepath.Join(agentWorkspace, "sessions")
+	}
+	slog.Debug("[agent] session directory configured", slog.String("session_dir", sessionDir))
+
+	skillLoader := skill.NewLoader()
+	if err := skillLoader.Init(agentWorkspace); err != nil {
+		// do not exit here, just log the error
+		slog.Error("[agent] failed to init skill loader", slog.Any("error", err))
+	}
+
+	contextManager, err := agcontext.NewContextManager(
+		cfg.RootCtx,
+		agcontext.ContextManagerConfig{
+			AgentName:            cfg.Name,
+			AgentWorkspace:       agentWorkspace,
+			SessionDir:           sessionDir,
+			SystemPromptTemplate: cfg.subagentPrompt,
+		},
+		skillLoader,
+	)
+	if err != nil {
+		slog.Error("[agent] failed to create context manager, now exit", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	// mcp manager
+	mcpManager := tool.NewMcpToolManager()
+	// try to init mcp manager
+	mcpConfig, err := config.GetMcpConfig()
+	mcpLoaded := false
+	if err != nil {
+		slog.Debug("[agent] mcp config not found, mcp tools disabled")
+	} else {
+		mcpLoaded = true
+		mcpManager.Init(cfg.RootCtx, mcpConfig)
+		slog.Info("[agent] mcp tools loaded", slog.Int("tools_count", len(mcpManager.ListTools())))
+	}
+
+	agent := &Agent{
+		cfg:            cfg,
+		tools:          make(map[string]tool.Invoker),
+		contextManager: contextManager,
+		skillLoader:    skillLoader,
+		cachedReqs:     make(map[string]*schema.Request),
+		llm:            llm,
+		mcpManager:     mcpManager,
+		loopState: &loopState{
+			data: make(map[string]struct{}),
+			fn: func(channel, chatId string) string {
+				return channel + ":" + chatId
+			},
+		},
+	}
+	agent.mcpLoaded.Store(mcpLoaded)
+	if !cfg.isSpawned {
+		agent.subAgentResults = make(map[string]chan string)
+	}
+
+	if !cfg.doNotAutoRegisterTools {
+		agent.registerMainTools(agentWorkspace)
+		slog.Info("[agent] agent created successfully", slog.String("name", cfg.Name), slog.Int("builtin_tools", len(agent.tools)))
+	}
+
+	return agent
+}
+
+// register tools
+func (a *Agent) registerMainTools(agentWorkspace string) {
+	a.registerBasicTools(agentWorkspace)
+
+	a.RegisterTool(tools.Cron())
+	a.RegisterTool(tools.Subagent(a))
+}
+
+func (a *Agent) registerBasicTools(agentWorkspace string) {
+	workspaceReadDir := workspace.GetAllowedReadPaths(agentWorkspace)
+	workspaceWriteDir := workspace.GetAllowedWritePaths(agentWorkspace)
+
+	a.RegisterTool(tools.ReadFile(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
+	a.RegisterTool(tools.WriteFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
+	a.RegisterTool(tools.ListDir(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
+	a.RegisterTool(tools.EditFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
+	a.RegisterTool(tools.LoadRef())
+	a.RegisterTool(tools.Shell())
+	a.RegisterTool(tools.UseSkill(a.skillLoader))
+	a.RegisterTool(tools.WebFetch())
+	a.RegisterTool(tools.TodoWrite())
+}
+
+func (a *Agent) RegisterTool(tool tool.Invoker) {
+	if tool == nil {
+		return
+	}
+
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+
+	if _, ok := a.tools[tool.Info().Name]; ok {
+		slog.Warn("[agent] tool already registered", slog.String("tool_name", tool.Info().Name))
+	} else {
+		a.tools[tool.Info().Name] = tool
+	}
+}
+
+func (a *Agent) Name() string {
+	return a.cfg.Name
+}
+
+func (a *Agent) providerConfig() config.ProviderConfig {
+	return config.GetConfig().Providers[a.cfg.Provider]
+}
+
+// Handling incoming message in a blocking way
+func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
+	return a.handleIncomingMessage(ctx, msg)
+}
+
 // Handling incoming message in a streaming way
 func (a *Agent) AskStream(ctx context.Context, msg *UserMessage, emitter StreamEmitter) {
 	a.handleIncomingMessageStream(ctx, msg, emitter)
@@ -218,13 +282,15 @@ func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*
 		return nil, err
 	}
 	providerCfg := a.providerConfig()
-	r := schema.NewRequest(a.c.Model, msgList)
+	r := schema.NewRequest(a.cfg.Model, msgList)
 	r.Temperature = providerCfg.Temperature
 	r.MaxTokens = int64(providerCfg.MaxTokens)
-	if providerCfg.IsThinkingEnabled() {
-		r.Thinking = schema.EnableThinking()
-	} else {
-		r.Thinking = schema.DisableThinking()
+	if providerCfg.HasThinkingSet() {
+		if providerCfg.IsThinkingEnabled() {
+			r.Thinking = schema.EnableThinking()
+		} else {
+			r.Thinking = schema.DisableThinking()
+		}
 	}
 	r.Tools = a.buildLLMTools()
 
@@ -276,7 +342,7 @@ func (a *Agent) summarizeMessagesWithLLM(ctx context.Context, messages []param.M
 	summaryMsg = append(summaryMsg, messages...)
 
 	providerCfg := a.providerConfig()
-	req := schema.NewRequest(a.c.Model, summaryMsg)
+	req := schema.NewRequest(a.cfg.Model, summaryMsg)
 	req.Temperature = providerCfg.Temperature
 	req.MaxTokens = 2000
 
@@ -314,6 +380,12 @@ func (a *Agent) buildLLMTools() []param.Tool {
 
 // ClearContext clears all messages in a session
 func (a *Agent) ClearContext(channel, chatId string) error {
+	// Clear cached request for token estimation
+	cacheKey := channel + ":" + chatId
+	a.cachedReqsMu.Lock()
+	delete(a.cachedReqs, cacheKey)
+	a.cachedReqsMu.Unlock()
+
 	return a.contextManager.ClearSession(channel, chatId)
 }
 

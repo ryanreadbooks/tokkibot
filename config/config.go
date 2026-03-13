@@ -45,7 +45,7 @@ type AgentBinding struct {
 }
 
 type AgentEntry struct {
-	Id           string        `json:"id"`
+	Name         string        `json:"name"`
 	MaxIteration int           `json:"maxIteration"`
 	Provider     string        `json:"provider"`
 	Model        string        `json:"model,omitempty"`
@@ -88,7 +88,7 @@ func BootstrapConfig() Config {
 		},
 		Agents: []AgentEntry{
 			{
-				Id:           MainAgentName,
+				Name:         MainAgentName,
 				MaxIteration: defaultMaxIteration,
 				Provider:     "moonshot",
 				Model:        "kimi-k2.5",
@@ -185,9 +185,9 @@ func GetConfig() Config {
 
 // GetAgentEntry returns the agent entry for the given agent id.
 // Returns nil if not found.
-func GetAgentEntry(agentId string) *AgentEntry {
+func GetAgentEntry(name string) *AgentEntry {
 	for i := range conf.Agents {
-		if conf.Agents[i].Id == agentId {
+		if conf.Agents[i].Name == name {
 			return &conf.Agents[i]
 		}
 	}
@@ -213,6 +213,10 @@ func GetChannelAccountRaw(channelName, accountName string) (json.RawMessage, boo
 	}
 	raw, ok := ch.Account[accountName]
 	return raw, ok
+}
+
+func (pc ProviderConfig) HasThinkingSet() bool {
+	return pc.EnableThinking != nil
 }
 
 // IsThinkingEnabled returns whether thinking is enabled for this provider

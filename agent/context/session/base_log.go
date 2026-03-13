@@ -31,7 +31,7 @@ func (b *baseLog) closeFile() {
 }
 
 // fullLogFileName returns the full path to the log file
-// ~/sessions/channel/chatid/filename
+// workspace/sessions/channel/chatid/filename
 func (b *baseLog) fullLogFileName(root string) string {
 	return filepath.Join(root, b.channel, b.chatId, b.filename)
 }
