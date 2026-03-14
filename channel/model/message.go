@@ -138,10 +138,17 @@ func (m *IncomingMessage) Key() string {
 	return fmt.Sprintf("%s:%s", m.Channel, m.ChatId)
 }
 
+type OutgoingMessageAttachment struct {
+	Type     AttachmentType
+	Data     []byte
+	Filename string
+}
+
 type OutgoingMessage struct {
-	ReceiverId string
-	Channel    Type
-	ChatId     string
-	Content    string
-	Metadata   map[string]any
+	ReceiverId  string
+	Channel     Type
+	ChatId      string
+	Content     string
+	Metadata    map[string]any
+	Attachments []*OutgoingMessageAttachment
 }

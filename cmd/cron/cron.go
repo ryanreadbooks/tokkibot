@@ -210,8 +210,8 @@ var runCmd = &cobra.Command{
 		fmt.Printf("Prompt: %s\n\n", task.Prompt())
 
 		ag, err := agent.Prepare(ctx, config.CronsAgentName,
-			agent.WithWorkspaceOverride(config.GetAgentWorkspaceDir(config.MainAgentName)),
-			agent.WithSessionDirOverride(config.GetCronSessionsDir()),
+			agent.WithWorkspace(config.GetAgentWorkspaceDir(config.MainAgentName)),
+			agent.WithSessionDir(config.GetCronSessionsDir()),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to prepare agent: %w", err)

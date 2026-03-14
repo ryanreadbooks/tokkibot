@@ -19,3 +19,6 @@ var CronDescription string
 
 //go:embed subagent.md
 var SubagentDescription string
+
+//go:embed send_message.md
+var SendMessageDescription string

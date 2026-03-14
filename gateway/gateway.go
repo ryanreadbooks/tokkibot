@@ -9,6 +9,7 @@ import (
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/ryanreadbooks/tokkibot/agent"
+	"github.com/ryanreadbooks/tokkibot/agent/tools"
 	chadapter "github.com/ryanreadbooks/tokkibot/channel/adapter"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
@@ -21,6 +22,8 @@ type gatewayOption struct {
 	runCronTasks bool
 	verbose      bool
 	agentNames   []string // agent names to initialize
+
+	enableAutoMessageDelivery bool
 }
 
 type GatewayOption func(*gatewayOption)
@@ -45,6 +48,12 @@ func WithAgentNames(names []string) GatewayOption {
 	}
 }
 
+func WithDisableAutoMessageDelivery() GatewayOption {
+	return func(o *gatewayOption) {
+		o.enableAutoMessageDelivery = false
+	}
+}
+
 type Gateway struct {
 	agents   map[string]*agent.Agent
 	wg       sync.WaitGroup
@@ -66,7 +75,9 @@ type Gateway struct {
 }
 
 func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
-	option := &gatewayOption{}
+	option := &gatewayOption{
+		enableAutoMessageDelivery: true,
+	}
 	for _, opt := range opts {
 		opt(option)
 	}
@@ -87,14 +98,19 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to prepare agent %s: %w", name, err)
 		}
+		if !option.enableAutoMessageDelivery {
+			ag.UnRegisterTool(tools.ToolNameSendMessage)
+		}
 		agents[name] = ag
 	}
 
 	// prepare __cron agent (uses main's workspace, isolated sessions)
 	cronsAg, err := agent.Prepare(ctx, config.CronsAgentName,
-		agent.WithWorkspaceOverride(config.GetAgentWorkspaceDir(config.MainAgentName)),
-		agent.WithSessionDirOverride(config.GetCronSessionsDir()),
+		agent.WithWorkspace(config.GetAgentWorkspaceDir(config.MainAgentName)),
+		agent.WithSessionDir(config.GetCronSessionsDir()),
 	)
+	cronsAg.UnRegisterTool(tools.ToolNameSendMessage)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare crons agent: %w", err)
 	}
@@ -262,7 +278,14 @@ func (g *Gateway) workerDo(
 	ctx = tool.WithConfirmer(ctx, confirmHandler)
 
 	ag := g.agentForAdapter(adapter.Type())
-	result := ag.Ask(ctx, userMessage)
+	askOpts := []agent.AskOption{}
+	if g.option.enableAutoMessageDelivery {
+		askOpts = append(askOpts, agent.WithMessageChannel(&agent.AskTemporaryMessageChannel{
+			OutChan:  adapter.SendChan(),
+			Metadata: rawMsg.Metadata,
+		}))
+	}
+	result := ag.Ask(ctx, userMessage, askOpts...)
 
 	select {
 	case adapter.SendChan() <- &chmodel.OutgoingMessage{
@@ -287,7 +310,14 @@ func (g *Gateway) workerDoStream(
 
 	ag := g.agentForAdapter(adapter.Type())
 	emitter := &msgEmitter{msg: rawMsg}
-	ag.AskStream(ctx, userMessage, emitter)
+	askOpts := []agent.AskOption{}
+	if g.option.enableAutoMessageDelivery {
+		askOpts = append(askOpts, agent.WithMessageChannel(&agent.AskTemporaryMessageChannel{
+			OutChan:  adapter.SendChan(),
+			Metadata: rawMsg.Metadata,
+		}))
+	}
+	ag.AskStream(ctx, userMessage, emitter, askOpts...)
 }
 
 // msgEmitter adapts IncomingMessage to agent.StreamEmitter
@@ -342,7 +372,11 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 
 	adapter, ok := g.adapters[task.DeliverChannel]
 	if !ok {
-		slog.ErrorContext(ctx, "adapter not found for cron task delivery", slog.String("name", task.Name), slog.String("channel", task.DeliverChannel.String()))
+		slog.ErrorContext(ctx, "adapter not found for cron task delivery",
+			slog.String("name", task.Name),
+			slog.String("channel", task.DeliverChannel.String()),
+			slog.String("to", task.DeliverTo),
+		)
 		return
 	}
 
@@ -353,7 +387,11 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 		ChatId:     chatId,
 		Content:    result,
 	}:
-		slog.InfoContext(ctx, "cron task result delivered", slog.String("name", task.Name), slog.String("to", task.DeliverTo))
+		slog.InfoContext(ctx, "cron task result delivered",
+			slog.String("name", task.Name),
+			slog.String("channel", task.DeliverChannel.String()),
+			slog.String("to", task.DeliverTo),
+		)
 	default:
 		slog.WarnContext(ctx, "failed to deliver cron task result", slog.String("name", task.Name))
 	}

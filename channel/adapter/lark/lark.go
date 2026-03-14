@@ -119,41 +119,65 @@ func (a *LarkAdapter) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case msg := <-a.output:
-			messageId, _ := msg.Metadata[metaKeyMessageId].(string)
-			reactionId, _ := msg.Metadata[metaKeyReactionId].(string)
-			if messageId != "" && reactionId != "" {
-				// send new done reaction
-				a.sendMessageReaction(ctx, messageId, emoji.DONE)
-			}
-
-			if messageId != "" {
-				// send output message
-				a.replyInteractiveMessage(ctx, messageId, msg.Content)
-			} else {
-				if msg.ReceiverId != "" {
-					if strings.HasPrefix(msg.ReceiverId, "ou_") {
-						a.sendInteractiveMessageToUser(ctx, msg.ReceiverId, msg.Content)
-					} else {
-						a.sendInteractiveMessageToChat(ctx, msg.ReceiverId, msg.Content)
-					}
-				}
-			}
-
-			a.cancelMu.Lock()
-			if cancel := a.cancels[messageId]; cancel != nil {
-				cancel()
-			}
-			a.cancelMu.Unlock()
+			a.onOutgoingMessage(ctx, msg)
 		}
 	}
 }
 
-// derefStr safely dereferences a string pointer, returning empty string if nil
-func derefStr(p *string) string {
-	if p == nil {
-		return ""
+func (a *LarkAdapter) onOutgoingMessage(ctx context.Context, msg *model.OutgoingMessage) {
+	messageId, _ := msg.Metadata[metaKeyMessageId].(string)
+
+	if messageId != "" { // reply message
+		if msg.Content != "" {
+			a.replyCard(ctx, messageId, msg.Content)
+		}
+		if len(msg.Attachments) > 0 {
+			a.doReplyAttachments(ctx, messageId, msg.Attachments)
+		}
+	} else if msg.ReceiverId != "" { // send message directly
+		var target messageTarget
+		if strings.HasPrefix(msg.ReceiverId, "ou_") {
+			target = userTarget(msg.ReceiverId)
+		} else {
+			target = chatTarget(msg.ReceiverId)
+		}
+		if msg.Content != "" {
+			a.sendCard(ctx, target, msg.Content)
+		}
+		if len(msg.Attachments) > 0 {
+			a.doSendAttachments(ctx, target, msg.Attachments)
+		}
 	}
-	return *p
+}
+
+func (a *LarkAdapter) doReplyAttachments(ctx context.Context, messageId string, attachments []*model.OutgoingMessageAttachment) {
+	for _, attachment := range attachments {
+		switch attachment.Type {
+		case model.AttachmentImage:
+			a.replyImage(ctx, messageId, attachment.Data)
+		case model.AttachmentAudio:
+			a.replyAudio(ctx, messageId, attachment.Filename, attachment.Data)
+		case model.AttachmentVideo:
+			a.replyMedia(ctx, messageId, attachment.Filename, attachment.Data)
+		case model.AttachmentFile:
+			a.replyFile(ctx, messageId, attachment.Filename, attachment.Data)
+		}
+	}
+}
+
+func (a *LarkAdapter) doSendAttachments(ctx context.Context, target messageTarget, attachments []*model.OutgoingMessageAttachment) {
+	for _, attachment := range attachments {
+		switch attachment.Type {
+		case model.AttachmentImage:
+			a.sendImage(ctx, target, attachment.Data)
+		case model.AttachmentAudio:
+			a.sendAudio(ctx, target, attachment.Filename, attachment.Data)
+		case model.AttachmentVideo:
+			a.sendMedia(ctx, target, attachment.Filename, attachment.Data)
+		case model.AttachmentFile:
+			a.sendFile(ctx, target, attachment.Filename, attachment.Data)
+		}
+	}
 }
 
 func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2MessageReceiveV1) error {
@@ -253,7 +277,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 			"content", messageContent,
 			"attachments", len(attachments),
 			"error", err)
-		a.sendErrorLog(ctx, senderId, err)
+		a.sendError(ctx, senderId, err)
 		return nil
 	}
 
@@ -371,10 +395,10 @@ type larkStreamState struct {
 	streamSendEnabled       bool
 	shouldRecallCardMessage bool
 
-	dirty                bool
-	lastSeqLen           int
-	lastReasoningSeqLen  int
-	stopCh               chan struct{}
+	dirty               bool
+	lastSeqLen          int
+	lastReasoningSeqLen int
+	stopCh              chan struct{}
 }
 
 func (s *larkStreamState) init(thinkingEnaled bool) {
@@ -387,7 +411,7 @@ func (s *larkStreamState) init(thinkingEnaled bool) {
 	)
 	slog.InfoContext(s.ctx, "created card entity for stream", "card_id", cardId, "error", err)
 	if err == nil {
-		replyMessageId, err := s.adapter.replyInteractiveCardMessage(s.ctx, s.messageId, cardId)
+		replyMessageId, err := s.adapter.replyCardEntity(s.ctx, s.messageId, cardId)
 		if err == nil {
 			slog.InfoContext(s.ctx, "replied interactive card message", "message_id", s.messageId, "card_id", cardId)
 			s.cardId = cardId
@@ -412,12 +436,12 @@ func (s *larkStreamState) flushLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.flush()
+			s.flush(s.ctx)
 		}
 	}
 }
 
-func (s *larkStreamState) flush() {
+func (s *larkStreamState) flush(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -435,7 +459,7 @@ func (s *larkStreamState) flush() {
 	}
 
 	if s.thinkingEnabled && reasoningChanged && len(reasoningContent) > 0 {
-		s.adapter.updateCardEntityForStream(s.ctx,
+		s.adapter.updateCardEntityForStream(ctx,
 			s.cardId, s.reasoningContentElementId,
 			reasoningContent,
 			s.seq)
@@ -443,14 +467,13 @@ func (s *larkStreamState) flush() {
 		s.lastReasoningSeqLen = len(reasoningContent)
 	}
 
-	// if finished thinking update element
 	if s.thinkingEnabled && s.thinkingFinished.Load() {
-		s.adapter.patchThinkingElementToFinished(s.ctx, s.cardId, s.seq)
+		s.adapter.patchThinkingElementToFinished(ctx, s.cardId, s.seq)
 		s.seq++
 	}
 
 	if contentChanged && len(content) > 0 {
-		err := s.adapter.updateCardEntityForStream(s.ctx, s.cardId, s.contentElementId, content, s.seq)
+		err := s.adapter.updateCardEntityForStream(ctx, s.cardId, s.contentElementId, content, s.seq)
 		if err != nil {
 			s.shouldRecallCardMessage = true
 			s.streamSendEnabled = false
@@ -476,13 +499,12 @@ func (s *larkStreamState) onContent(content *model.StreamContent) {
 	s.mu.Unlock()
 
 	newContent := s.contentBuilder.String()
-	// 如果一直没有内容 然后突然有内容了 并且是在thinking enabled情况下 则认为thinking finished
 	if oldContent == "" && newContent != "" && content.ThinkingEnabled {
 		s.thinkingFinished.Store(true)
 	}
 
 	if pendingContentLen >= streamFlushThreshold || pendingReasoningLen >= streamFlushThreshold {
-		s.flush()
+		s.flush(s.ctx)
 	}
 }
 
@@ -491,20 +513,33 @@ func (s *larkStreamState) onDone() {
 		close(s.stopCh)
 	}
 
+	// sourceCtx may already be canceled (e.g. send_message tool triggers
+	// onOutgoingMessage which cancels sourceCtx before the agent finishes).
+	// Use a non-cancelable context so cleanup API calls always go through.
+	cleanupCtx := context.WithoutCancel(s.ctx)
+
 	s.thinkingFinished.Store(true)
-	s.flush()
+	s.flush(cleanupCtx)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.streamSendEnabled {
 		if s.replyMessageId != "" && s.shouldRecallCardMessage {
-			s.adapter.recallMessage(s.ctx, s.replyMessageId)
+			s.adapter.recallMessage(cleanupCtx, s.replyMessageId)
 		}
-		s.adapter.replyInteractiveMessage(s.ctx, s.messageId, s.contentBuilder.String())
-		slog.InfoContext(s.ctx, "fallback to normal interactive message", "message_id", s.messageId)
+		s.adapter.replyCard(cleanupCtx, s.messageId, s.contentBuilder.String())
+		slog.InfoContext(cleanupCtx, "fallback to normal interactive message", "message_id", s.messageId)
 	} else {
-		s.adapter.stopCardEntityStream(s.ctx, s.cardId, s.seq)
-		s.adapter.sendMessageReaction(s.ctx, s.messageId, emoji.DONE)
+		s.adapter.stopCardEntityStream(cleanupCtx, s.cardId, s.seq)
 	}
+	s.mu.Unlock()
+
+	s.adapter.sendMessageReaction(cleanupCtx, s.messageId, emoji.DONE)
+
+	// cancel sourceCtx and clean up — this is the right place since the agent is truly done
+	s.adapter.cancelMu.Lock()
+	if cancel := s.adapter.cancels[s.messageId]; cancel != nil {
+		cancel()
+		delete(s.adapter.cancels, s.messageId)
+	}
+	s.adapter.cancelMu.Unlock()
 }

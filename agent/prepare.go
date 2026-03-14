@@ -9,18 +9,18 @@ import (
 )
 
 // PrepareOption allows customizing agent preparation
-type PrepareOption func(*AgentConfig)
+type PrepareOption func(*Config)
 
-// WithWorkspaceOverride sets a custom workspace dir (e.g. __cron uses main's workspace)
-func WithWorkspaceOverride(workspace string) PrepareOption {
-	return func(c *AgentConfig) {
+// WithWorkspace sets a custom workspace dir (e.g. __cron uses main's workspace)
+func WithWorkspace(workspace string) PrepareOption {
+	return func(c *Config) {
 		c.WorkspaceDir = workspace
 	}
 }
 
-// WithSessionDirOverride sets a custom session dir (e.g. __cron uses global sessions dir)
-func WithSessionDirOverride(sessionDir string) PrepareOption {
-	return func(c *AgentConfig) {
+// WithSessionDir sets a custom session dir (e.g. __cron uses global sessions dir)
+func WithSessionDir(sessionDir string) PrepareOption {
+	return func(c *Config) {
 		c.SessionDir = sessionDir
 	}
 }
@@ -58,7 +58,7 @@ func Prepare(ctx context.Context, agentName string, opts ...PrepareOption) (ag *
 		return
 	}
 
-	agCfg := AgentConfig{
+	agCfg := Config{
 		RootCtx:      ctx,
 		Name:         agentName,
 		Provider:     providerName,

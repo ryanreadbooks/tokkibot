@@ -7,6 +7,7 @@ import (
 	"html"
 	"log/slog"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/xstring"
@@ -47,28 +48,16 @@ func (a *LarkAdapter) sendMessage(
 	}
 }
 
-func (a *LarkAdapter) sendMessageToUser(ctx context.Context, userOpenId, msgType string, content string) {
-	a.sendMessage(ctx, imv1.ReceiveIdTypeOpenId, userOpenId, msgType, content)
-}
-
-func (a *LarkAdapter) sendMessageToChat(ctx context.Context, chatId, msgType string, content string) {
-	a.sendMessage(ctx, imv1.ReceiveIdTypeChatId, chatId, msgType, content)
-}
-
-// Send error log to lark to display to user.
-func (a *LarkAdapter) sendErrorLog(ctx context.Context, userOpenId string, err error) {
+func (a *LarkAdapter) sendError(ctx context.Context, userOpenId string, err error) {
 	if err == nil {
 		return
 	}
 
 	escapedError := html.EscapeString(err.Error())
-	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, escapedError))
+	a.sendMessage(ctx, imv1.ReceiveIdTypeOpenId, userOpenId, imv1.MsgTypeText, fmt.Sprintf(`{"text":"%s"}`, escapedError))
 }
 
-// Send card message to lark.
-// Content will be parsed and rendered as lark card elements.
-// Content is considered as markdown format
-func (a *LarkAdapter) sendInteractiveMessageToUser(ctx context.Context, userOpenId string, content string) {
+func (a *LarkAdapter) sendCard(ctx context.Context, target messageTarget, content string) {
 	cd := card.NewCardV2Builder().
 		AppendBodyElement(card.NewBodyMarkdownElement(content)).
 		Build()
@@ -79,21 +68,47 @@ func (a *LarkAdapter) sendInteractiveMessageToUser(ctx context.Context, userOpen
 		return
 	}
 
-	a.sendMessageToUser(ctx, userOpenId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
-func (a *LarkAdapter) sendInteractiveMessageToChat(ctx context.Context, chatId string, content string) {
-	cd := card.NewCardV2Builder().
-		AppendBodyElement(card.NewBodyMarkdownElement(content)).
-		Build()
-
-	cdJson, err := json.Marshal(cd)
+func (a *LarkAdapter) sendImage(ctx context.Context, target messageTarget, image []byte) {
+	imgKey, err := a.uploadMessageResourceImage(ctx, image)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to upload image", "error", err)
 		return
 	}
 
-	a.sendMessageToChat(ctx, chatId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeImage, `{"image_key":"`+imgKey+`"}`)
+}
+
+func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filename string, audio []byte) {
+	audioKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeOpus, filename, audio)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to upload audio", "error", err)
+		return
+	}
+
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeAudio, `{"file_key":"`+audioKey+`"}`)
+}
+
+func (a *LarkAdapter) sendMedia(ctx context.Context, target messageTarget, filename string, media []byte) {
+	mediaKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to upload media", "error", err)
+		return
+	}
+
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeMedia, `{"file_key":"`+mediaKey+`"}`)
+}
+
+func (a *LarkAdapter) sendFile(ctx context.Context, target messageTarget, filename string, file []byte) {
+	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeStream, filename, file)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to upload file", "error", err)
+		return
+	}
+
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeFile, `{"file_key":"`+fileKey+`"}`)
 }
 
 const (
@@ -106,7 +121,7 @@ const (
 )
 
 // TODO: 由于当前是无状态的 重启后就无法回复pending的confirmation了 难以实现 暂时不实现交互式的工具调用确认
-func (a *LarkAdapter) constructConfirmationCard(content string, disableButtons bool) *card.CardV2 {
+func (a *LarkAdapter) buildConfirmationCard(content string, disableButtons bool) *card.CardV2 {
 	formContainer := card.NewBodyFormElement("lark-confirm-form")
 	descDiv := card.NewBodyDivElement(content)
 	input := card.NewBodyInputElement().
@@ -160,26 +175,21 @@ func (a *LarkAdapter) constructConfirmationCard(content string, disableButtons b
 		Build()
 }
 
-func (a *LarkAdapter) sendConfirmationInteractiveMessage(
-	ctx context.Context,
-	receiverIdTyp string,
-	receiverId string,
-	content string,
-) {
-	card := a.constructConfirmationCard(content, false)
+func (a *LarkAdapter) sendConfirmationCard(ctx context.Context, target messageTarget, content string) {
+	card := a.buildConfirmationCard(content, false)
 	cdJson, err := json.Marshal(card)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
 		return
 	}
 
-	a.sendMessage(ctx, receiverIdTyp, receiverId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
+	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
-func (a *LarkAdapter) replyConfimationInteractiveCardMessage(
+func (a *LarkAdapter) replyConfirmationCard(
 	ctx context.Context, messageId string, content string,
 ) (string, error) {
-	card := a.constructConfirmationCard(content, false)
+	card := a.buildConfirmationCard(content, false)
 	cdJson, err := json.Marshal(card)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
@@ -213,7 +223,7 @@ func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgTyp
 	return *resp.Data.MessageId, nil
 }
 
-func (a *LarkAdapter) replyInteractiveMessage(ctx context.Context, messageId string, content string) (string, error) {
+func (a *LarkAdapter) replyCard(ctx context.Context, messageId string, content string) (string, error) {
 	cd := card.NewCardV2Builder().
 		AppendBodyElement(card.NewBodyMarkdownElement(content)).
 		Build()
@@ -227,7 +237,58 @@ func (a *LarkAdapter) replyInteractiveMessage(ctx context.Context, messageId str
 	return a.replyMessage(ctx, messageId, imv1.MsgTypeInteractive, xstring.FromBytes(cdJson))
 }
 
-func (a *LarkAdapter) replyInteractiveCardMessage(ctx context.Context, messageId, cardId string) (string, error) {
+func (a *LarkAdapter) replyImage(ctx context.Context, messageId string, image []byte) (string, error) {
+	// upload image first
+	imgKey, err := a.uploadMessageResourceImage(ctx, image)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image: %w", err)
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeImage, `{"image_key":"`+imgKey+`"}`)
+}
+
+func (a *LarkAdapter) replyAudio(ctx context.Context, messageId string, filename string, audio []byte) (string, error) {
+	audioKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeOpus, filename, audio)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload audio: %w", err)
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeAudio, `{"file_key":"`+audioKey+`"}`)
+}
+
+func (a *LarkAdapter) replyMedia(ctx context.Context, messageId string, filename string, media []byte) (string, error) {
+	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload media: %w", err)
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeFile, `{"file_key":"`+fileKey+`"}`)
+}
+
+func (a *LarkAdapter) replyFile(ctx context.Context, messageId string, filename string, file []byte) (string, error) {
+	var fileType uploadFileType
+	switch mime := mimetype.Detect(file).String(); mime {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		fileType = uploadFileTypeDoc
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		fileType = uploadFileTypeXls
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		fileType = uploadFileTypePpt
+	case "application/pdf", "application/x-pdf":
+		fileType = uploadFileTypePdf
+	default:
+		fileType = uploadFileTypeStream
+	}
+
+	fileKey, err := a.uploadMessageResourceFile(ctx, fileType, filename, file)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	return a.replyMessage(ctx, messageId, imv1.MsgTypeFile, `{"file_key":"`+fileKey+`"}`)
+}
+
+func (a *LarkAdapter) replyCardEntity(ctx context.Context, messageId, cardId string) (string, error) {
 	cd := card.NewEntity(cardId)
 	cdJson, err := json.Marshal(cd)
 	if err != nil {

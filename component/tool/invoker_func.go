@@ -11,6 +11,7 @@ import (
 type InvokeMeta struct {
 	Channel string
 	ChatId  string
+	Extras  map[string]any
 }
 
 type InvokerFunc[T, O any] func(ctx context.Context, meta InvokeMeta, input T) (O, error)

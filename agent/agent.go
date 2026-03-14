@@ -12,17 +12,17 @@ import (
 
 	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
-	"github.com/ryanreadbooks/tokkibot/workspace"
-
-	"github.com/ryanreadbooks/tokkibot/component/skill"
-	"github.com/ryanreadbooks/tokkibot/component/tool"
+	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	componentskill "github.com/ryanreadbooks/tokkibot/component/skill"
+	componentool "github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm"
 	"github.com/ryanreadbooks/tokkibot/llm/schema"
 	"github.com/ryanreadbooks/tokkibot/llm/schema/param"
+	"github.com/ryanreadbooks/tokkibot/workspace"
 )
 
-//go:embed summary.md
+//go:embed template/summary.md
 var summaryPrompt string
 
 type (
@@ -31,106 +31,42 @@ type (
 	AttachmentType        = agcontext.AttachmentType
 )
 
-type AgentConfig struct {
-	RootCtx context.Context
-
-	// Agent name, determines workspace and session isolation.
-	Name string
-
-	// The provider to use.
-	Provider string
-
-	// The model to use.
-	Model string
-
-	// Max tool-call iterations per request.
-	MaxIteration int
-
-	ResumeSessionId string
-
-	WorkspaceDir string // workspace directory
-	SessionDir   string // where session and context logs are stored
-
-	isSpawned              bool
-	doNotAutoRegisterTools bool
-	subagentPrompt         string
-}
-
-type EmittedReasoningContentMetadata struct {
-	ThinkingEnabled bool
-}
-
-type EmittedContent struct {
-	Round            int
-	Content          string
-	ReasoningContent string
-	Metadata         EmittedReasoningContentMetadata
-}
-
-// StreamEmitter is the interface for emitting stream events
-type StreamEmitter interface {
-	EmitContent(content *EmittedContent)
-	EmitTool(round int, name, args string)
-	EmitDone()
-}
-
-type loopState struct {
-	mu   sync.Mutex
-	data map[string]struct{}
-
-	fn func(channel, chatId string) string
-}
-
-func (s *loopState) setState(channel, chatId string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data[s.fn(channel, chatId)] = struct{}{}
-}
-
-func (s *loopState) unsetState(channel, chatId string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.data, s.fn(channel, chatId))
-}
-
-func (s *loopState) isStateSet(channel, chatId string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.data[s.fn(channel, chatId)]
-	return ok
-}
-
 type Agent struct {
-	cfg AgentConfig
+	cfg Config
 	// The LLM service to use.
 	llm llm.LLM
 
 	toolsMu sync.RWMutex
-	tools   map[string]tool.Invoker
+	tools   map[string]componentool.Invoker
 
+	// optional output channels
+	outChannelsMu sync.RWMutex
+	outChannels   map[string]chan<- *chmodel.OutgoingMessage
 	// The context manager for the agent.
 	contextManager *agcontext.ContextManager
 
 	// skill loader
-	skillLoader *skill.Loader
+	skillLoader *componentskill.Loader
 
 	cachedReqsMu sync.RWMutex
 	cachedReqs   map[string]*schema.Request
 
 	// mcp
 	mcpLoaded  atomic.Bool
-	mcpManager *tool.McpToolManager
+	mcpManager *componentool.McpToolManager
 
-	// subagents results storage
-	subAgentResultsMu sync.Mutex
-	subAgentResults   map[string]chan string // name -> result channel
+	// subagent tool delegates
+	subAgentResultsMu    sync.Mutex
+	subAgentResults      map[string]chan string // name -> result channel
+	subAgentToolDelegate *subAgentToolDelegate
 
-	loopState *loopState
+	// send message tool delegate
+	sendMessageToolDelegate *messageToolDelegate
 }
 
 func NewAgent(
 	llm llm.LLM,
-	cfg AgentConfig,
+	cfg Config,
 ) *Agent {
 	slog.Info("[agent] creating new agent",
 		slog.Bool("is_spawned", cfg.isSpawned),
@@ -153,7 +89,7 @@ func NewAgent(
 	}
 	slog.Debug("[agent] session directory configured", slog.String("session_dir", sessionDir))
 
-	skillLoader := skill.NewLoader()
+	skillLoader := componentskill.NewLoader()
 	if err := skillLoader.Init(agentWorkspace); err != nil {
 		// do not exit here, just log the error
 		slog.Error("[agent] failed to init skill loader", slog.Any("error", err))
@@ -175,7 +111,7 @@ func NewAgent(
 	}
 
 	// mcp manager
-	mcpManager := tool.NewMcpToolManager()
+	mcpManager := componentool.NewMcpToolManager()
 	// try to init mcp manager
 	mcpConfig, err := config.GetMcpConfig()
 	mcpLoaded := false
@@ -189,19 +125,16 @@ func NewAgent(
 
 	agent := &Agent{
 		cfg:            cfg,
-		tools:          make(map[string]tool.Invoker),
+		tools:          make(map[string]componentool.Invoker),
 		contextManager: contextManager,
 		skillLoader:    skillLoader,
 		cachedReqs:     make(map[string]*schema.Request),
 		llm:            llm,
 		mcpManager:     mcpManager,
-		loopState: &loopState{
-			data: make(map[string]struct{}),
-			fn: func(channel, chatId string) string {
-				return channel + ":" + chatId
-			},
-		},
 	}
+
+	agent.subAgentToolDelegate = &subAgentToolDelegate{a: agent}
+	agent.sendMessageToolDelegate = &messageToolDelegate{a: agent}
 	agent.mcpLoaded.Store(mcpLoaded)
 	if !cfg.isSpawned {
 		agent.subAgentResults = make(map[string]chan string)
@@ -220,7 +153,8 @@ func (a *Agent) registerMainTools(agentWorkspace string) {
 	a.registerBasicTools(agentWorkspace)
 
 	a.RegisterTool(tools.Cron())
-	a.RegisterTool(tools.Subagent(a))
+	a.RegisterTool(tools.Subagent(a.subAgentToolDelegate))
+	a.RegisterTool(tools.SendMessage(a.sendMessageToolDelegate))
 }
 
 func (a *Agent) registerBasicTools(agentWorkspace string) {
@@ -238,7 +172,13 @@ func (a *Agent) registerBasicTools(agentWorkspace string) {
 	a.RegisterTool(tools.TodoWrite())
 }
 
-func (a *Agent) RegisterTool(tool tool.Invoker) {
+func (a *Agent) UnRegisterTool(name string) {
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+	delete(a.tools, name)
+}
+
+func (a *Agent) RegisterTool(tool componentool.Invoker) {
 	if tool == nil {
 		return
 	}
@@ -261,14 +201,41 @@ func (a *Agent) providerConfig() config.ProviderConfig {
 	return config.GetConfig().Providers[a.cfg.Provider]
 }
 
+type (
+	AskTemporaryMessageChannel struct {
+		OutChan      chan<- *chmodel.OutgoingMessage
+		Metadata map[string]any
+	}
+	askOptionImpl struct {
+		messageChannel *AskTemporaryMessageChannel
+	}
+	AskOption func(*askOptionImpl)
+)
+
+func WithMessageChannel(msgCh *AskTemporaryMessageChannel) AskOption {
+	return func(o *askOptionImpl) {
+		o.messageChannel = msgCh
+	}
+}
+
 // Handling incoming message in a blocking way
-func (a *Agent) Ask(ctx context.Context, msg *UserMessage) string {
-	return a.handleIncomingMessage(ctx, msg)
+func (a *Agent) Ask(ctx context.Context, msg *UserMessage, opts ...AskOption) string {
+	opt := &askOptionImpl{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	return a.handleIncomingMessage(ctx, msg, opt)
 }
 
 // Handling incoming message in a streaming way
-func (a *Agent) AskStream(ctx context.Context, msg *UserMessage, emitter StreamEmitter) {
-	a.handleIncomingMessageStream(ctx, msg, emitter)
+func (a *Agent) AskStream(ctx context.Context, msg *UserMessage, emitter StreamEmitter, opts ...AskOption) {
+	opt := &askOptionImpl{}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	a.handleIncomingMessageStream(ctx, msg, emitter, opt)
 }
 
 func (a *Agent) buildLLMMessageRequest(ctx context.Context, msg *UserMessage) (*schema.Request, error) {
@@ -376,17 +343,6 @@ func (a *Agent) buildLLMTools() []param.Tool {
 	}
 
 	return params
-}
-
-// ClearContext clears all messages in a session
-func (a *Agent) ClearContext(channel, chatId string) error {
-	// Clear cached request for token estimation
-	cacheKey := channel + ":" + chatId
-	a.cachedReqsMu.Lock()
-	delete(a.cachedReqs, cacheKey)
-	a.cachedReqsMu.Unlock()
-
-	return a.contextManager.ClearSession(channel, chatId)
 }
 
 // CompactContext forces context compaction for a session

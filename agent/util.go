@@ -78,3 +78,14 @@ func (a *Agent) ListMcpServers() []*tool.McpServerStatus {
 	}
 	return nil
 }
+
+// ClearContext clears all messages in a session
+func (a *Agent) ClearContext(channel, chatId string) error {
+	// Clear cached request for token estimation
+	cacheKey := channel + ":" + chatId
+	a.cachedReqsMu.Lock()
+	delete(a.cachedReqs, cacheKey)
+	a.cachedReqsMu.Unlock()
+
+	return a.contextManager.ClearSession(channel, chatId)
+}

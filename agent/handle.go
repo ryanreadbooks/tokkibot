@@ -12,6 +12,20 @@ import (
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
+const (
+	xToolMetaMessageChannelKey = "x-tool-meta-message-channel"
+)
+
+func getXToolMetaMessageChannel(meta tool.InvokeMeta) *AskTemporaryMessageChannel {
+	if val, ok := meta.Extras[xToolMetaMessageChannelKey]; ok {
+		if out, ok := val.(*AskTemporaryMessageChannel); ok {
+			return out
+		}
+	}
+
+	return nil
+}
+
 // formatCancelledError formats the context cancellation error message
 func formatCancelledError(ctx context.Context) string {
 	return fmt.Sprintf("(operation cancelled by user: %s)", ctx.Err().Error())
@@ -24,7 +38,11 @@ func (a *Agent) initMessageContext(_ context.Context, userMsg *UserMessage) erro
 	return err
 }
 
-func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage) string {
+func (a *Agent) handleIncomingMessage(
+	ctx context.Context,
+	userMsg *UserMessage,
+	opt *askOptionImpl,
+) string {
 	slog.InfoContext(ctx, "[agent] handling incoming message", slog.Int("content_len", len(userMsg.Content)))
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
@@ -35,10 +53,10 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 	toolMeta := tool.InvokeMeta{
 		Channel: userMsg.Channel,
 		ChatId:  userMsg.ChatId,
+		Extras: map[string]any{
+			xToolMetaMessageChannelKey: opt.messageChannel,
+		},
 	}
-
-	a.loopState.setState(userMsg.Channel, userMsg.ChatId)
-	defer a.loopState.unsetState(userMsg.Channel, userMsg.ChatId)
 
 	var lastResponse *schema.Response
 	for curIter := 1; curIter <= a.cfg.MaxIteration; curIter++ {
@@ -98,7 +116,7 @@ func (a *Agent) handleIncomingMessage(ctx context.Context, userMsg *UserMessage)
 		}
 
 		// auto-push completed subagent results
-		if subResults := a.receiveSubAgentResults(); subResults != "" {
+		if subResults := a.subAgentToolDelegate.receiveSubAgentResults(); subResults != "" {
 			a.contextManager.AppendContextUserMessage(&UserMessage{
 				Channel: userMsg.Channel,
 				ChatId:  userMsg.ChatId,
@@ -125,7 +143,9 @@ type toolCallAndResult struct {
 //
 // This method will be called when one tool call response is completed.
 // Tool call will be invoked from another goroutine.
-func (a *Agent) handleStreamingToolCall(toolMeta tool.InvokeMeta, dstTcs *[]*toolCallAndResult) schema.StreamToolCallHandler {
+func (a *Agent) handleStreamingToolCall(
+	toolMeta tool.InvokeMeta, dstTcs *[]*toolCallAndResult,
+) schema.StreamToolCallHandler {
 	dstTcsMu := sync.Mutex{}
 	return func(ctx context.Context, tc schema.StreamChoiceDeltaToolCall) {
 		// invoke tool
@@ -148,7 +168,12 @@ func (a *Agent) handleStreamingToolCall(toolMeta tool.InvokeMeta, dstTcs *[]*too
 	}
 }
 
-func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMessage, emitter StreamEmitter) {
+func (a *Agent) handleIncomingMessageStream(
+	ctx context.Context,
+	userMsg *UserMessage,
+	emitter StreamEmitter,
+	opt *askOptionImpl,
+) {
 	defer emitter.EmitDone()
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
@@ -159,10 +184,10 @@ func (a *Agent) handleIncomingMessageStream(ctx context.Context, userMsg *UserMe
 	toolMeta := tool.InvokeMeta{
 		Channel: userMsg.Channel,
 		ChatId:  userMsg.ChatId,
+		Extras: map[string]any{
+			xToolMetaMessageChannelKey: opt.messageChannel,
+		},
 	}
-
-	a.loopState.setState(userMsg.Channel, userMsg.ChatId)
-	defer a.loopState.unsetState(userMsg.Channel, userMsg.ChatId)
 
 mainLoop:
 	for curIter := 1; curIter <= a.cfg.MaxIteration; curIter++ {
@@ -281,7 +306,7 @@ mainLoop:
 		}
 
 		// auto-push completed subagent results
-		if subResults := a.receiveSubAgentResults(); subResults != "" {
+		if subResults := a.subAgentToolDelegate.receiveSubAgentResults(); subResults != "" {
 			a.contextManager.AppendContextUserMessage(&UserMessage{
 				Channel: userMsg.Channel,
 				ChatId:  userMsg.ChatId,
@@ -303,7 +328,11 @@ func (a *Agent) handleToolCall(
 	return a.contextManager.AppendToolResult(inMsg, tc, toolResult)
 }
 
-func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, tc *schema.CompletionToolCall) string {
+func (a *Agent) getToolAndInvoke(
+	ctx context.Context,
+	toolMeta tool.InvokeMeta,
+	tc *schema.CompletionToolCall,
+) string {
 	select {
 	case <-ctx.Done():
 		slog.DebugContext(ctx, "[agent] tool invoke cancelled", slog.String("tool", tc.Function.Name))
@@ -311,7 +340,11 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 	default:
 	}
 
-	slog.DebugContext(ctx, "[agent] invoking tool", slog.String("tool", tc.Function.Name), slog.Int("args_len", len(tc.Function.Arguments)))
+	slog.DebugContext(ctx, "[agent] invoking tool",
+		slog.String("tool", tc.Function.Name),
+		slog.Int("args_len", len(tc.Function.Arguments)),
+		slog.String("arguments", tc.Function.Arguments),
+	)
 	startTime := time.Now()
 
 	// try builtin tools first
@@ -323,10 +356,20 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 		result, err := builtinTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
 		duration := time.Since(startTime).Milliseconds()
 		if err != nil {
-			slog.WarnContext(ctx, "[agent] builtin tool error", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Any("error", err))
+			slog.WarnContext(ctx, "[agent] builtin tool error",
+				slog.String("tool", tc.Function.Name),
+				slog.Int64("duration_ms", duration),
+				slog.Any("error", err),
+				slog.String("arguments", tc.Function.Arguments),
+			)
 			return err.Error()
 		}
-		slog.InfoContext(ctx, "[agent] builtin tool completed", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Int("result_len", len(result)))
+		slog.InfoContext(ctx, "[agent] builtin tool completed",
+			slog.String("tool", tc.Function.Name),
+			slog.Int64("duration_ms", duration),
+			slog.Int("result_len", len(result)),
+			slog.String("arguments", tc.Function.Arguments),
+		)
 		return result
 	}
 
@@ -336,10 +379,20 @@ func (a *Agent) getToolAndInvoke(ctx context.Context, toolMeta tool.InvokeMeta, 
 			result, err := mcpTool.Invoke(ctx, toolMeta, tc.Function.Arguments)
 			duration := time.Since(startTime).Milliseconds()
 			if err != nil {
-				slog.WarnContext(ctx, "[agent] mcp tool error", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Any("error", err))
+				slog.WarnContext(ctx, "[agent] mcp tool error",
+					slog.String("tool", tc.Function.Name),
+					slog.Int64("duration_ms", duration),
+					slog.Any("error", err),
+					slog.String("arguments", tc.Function.Arguments),
+				)
 				return err.Error()
 			}
-			slog.InfoContext(ctx, "[agent] mcp tool completed", slog.String("tool", tc.Function.Name), slog.Int64("duration_ms", duration), slog.Int("result_len", len(result)))
+			slog.InfoContext(ctx, "[agent] mcp tool completed",
+				slog.String("tool", tc.Function.Name),
+				slog.Int64("duration_ms", duration),
+				slog.Int("result_len", len(result)),
+				slog.String("arguments", tc.Function.Arguments),
+			)
 			return result
 		}
 	}

@@ -1,0 +1,2 @@
+Send a message to the user. Use this when you want to send something to the user or the user explicitly ask you to.
+You can send text (plain_text or markdown format) or attachments (images, audio, documents, etc).

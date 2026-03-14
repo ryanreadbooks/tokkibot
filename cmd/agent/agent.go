@@ -79,7 +79,9 @@ func init() {
 func runAgentOnce(ctx context.Context, message string) error {
 	slog.Info("[cmd/agent] running one-time agent", slog.String("agent", agentName), slog.Int("message_len", len(message)))
 
-	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
+	gw, err := gateway.NewGateway(ctx,
+		gateway.WithAgentNames([]string{agentName}),
+		gateway.WithDisableAutoMessageDelivery())
 	if err != nil {
 		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))
 		return fmt.Errorf("failed to create gateway: %w", err)
@@ -107,7 +109,10 @@ func runAgentOnce(ctx context.Context, message string) error {
 func runAgent(ctx context.Context) error {
 	slog.Info("[cmd/agent] starting interactive agent", slog.String("agent", agentName), slog.String("resume_session", resumeSessionChatId))
 
-	gw, err := gateway.NewGateway(ctx, gateway.WithAgentNames([]string{agentName}))
+	gw, err := gateway.NewGateway(ctx,
+		gateway.WithAgentNames([]string{agentName}),
+		gateway.WithDisableAutoMessageDelivery(),
+	)
 	if err != nil {
 		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))
 		return fmt.Errorf("failed to create gateway: %w", err)
