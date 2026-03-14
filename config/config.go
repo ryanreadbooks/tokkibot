@@ -183,6 +183,37 @@ func GetConfig() Config {
 	return conf
 }
 
+// SaveConfig saves the current config to disk
+func SaveConfig() error {
+	configPath, err := GetWorkspaceConfigPath()
+	if err != nil {
+		return fmt.Errorf("failed to get config path: %w", err)
+	}
+
+	data, err := conf.ToJson()
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateAgentProviderAndModel updates the provider and model for an agent and saves to disk
+func UpdateAgentProviderAndModel(agentName, provider, model string) error {
+	for i := range conf.Agents {
+		if conf.Agents[i].Name == agentName {
+			conf.Agents[i].Provider = provider
+			conf.Agents[i].Model = model
+			return SaveConfig()
+		}
+	}
+	return fmt.Errorf("agent not found: %s", agentName)
+}
+
 // GetAgentEntry returns the agent entry for the given agent id.
 // Returns nil if not found.
 func GetAgentEntry(name string) *AgentEntry {

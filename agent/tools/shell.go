@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -74,19 +76,83 @@ func (e *ConfirmationRequiredError) Error() string {
 	return fmt.Sprintf("Command '%s' requires user confirmation. Please confirm to proceed.", e.Command)
 }
 
+// getSystemShell returns the shell executable and arguments for the current OS.
+// Returns (shell, flag) where the command should be executed as: shell flag "command"
+func getSystemShell() (shell string, flag string) {
+	switch runtime.GOOS {
+	case "windows":
+		return "cmd", "/C"
+	default:
+		// Linux, macOS, and other Unix-like systems
+		return "sh", "-c"
+	}
+}
+
+// isCurlCommand checks if the command starts with curl
+func isCurlCommand(command string) bool {
+	cmd, _ := bash.ParseCommand(command)
+	return strings.HasPrefix(cmd, "curl ") || cmd == "curl"
+}
+
+// isHTMLContent checks if the content appears to be HTML
+func isHTMLContent(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") ||
+		strings.HasPrefix(lower, "<html") ||
+		strings.Contains(lower, "<head>") ||
+		strings.Contains(lower, "<body")
+}
+
+var (
+	// Match <style>...</style> tags (including attributes)
+	styleTagRe = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	// Match <link rel="stylesheet" ...> tags
+	linkStylesheetRe = regexp.MustCompile(`(?i)<link[^>]*rel\s*=\s*["']?stylesheet["']?[^>]*>`)
+	// Match inline style attributes: style="..." or style='...'
+	inlineStyleRe = regexp.MustCompile(`(?i)\s+style\s*=\s*["'][^"']*["']`)
+	// Match <script>...</script> tags
+	scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	// Match HTML comments
+	htmlCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// Match multiple consecutive newlines/whitespace
+	multiNewlineRe = regexp.MustCompile(`\n\s*\n\s*\n+`)
+)
+
+// filterHTMLContent removes CSS and unnecessary content from HTML to reduce token usage
+func filterHTMLContent(content string) string {
+	result := content
+
+	// Remove <style> tags
+	result = styleTagRe.ReplaceAllString(result, "")
+	// Remove <link rel="stylesheet"> tags
+	result = linkStylesheetRe.ReplaceAllString(result, "")
+	// Remove inline style attributes
+	result = inlineStyleRe.ReplaceAllString(result, "")
+	// Remove <script> tags
+	result = scriptTagRe.ReplaceAllString(result, "")
+	// Remove HTML comments
+	result = htmlCommentRe.ReplaceAllString(result, "")
+	// Collapse multiple newlines into two
+	result = multiNewlineRe.ReplaceAllString(result, "\n\n")
+
+	return strings.TrimSpace(result)
+}
+
 func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
-	name, args := bash.ParseCommand(input.Command)
-	if name == "" {
-		slog.WarnContext(ctx, "[tool/shell] empty command blocked")
-		return "", wrapShellError(errors.New("empty command"), shellBlockedTag)
+	if strings.TrimSpace(input.Command) == "" {
+		return "", wrapShellError(errors.New("empty command"), shellRunErrTag)
 	}
 
-	slog.InfoContext(ctx, "[tool/shell] executing command", slog.String("command", name), slog.String("working_dir", input.WorkingDir))
+	if tmpCmd, _ := bash.ParseCommand(input.Command); tmpCmd == "" {
+		return "", wrapShellError(errors.New("invalid command"), shellRunErrTag)
+	}
 
+	shell, flag := getSystemShell()
 	ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, shell, flag, input.Command)
 	if input.WorkingDir != "" {
 		cleanWd, _ := guard.ResolvePath(input.WorkingDir, []string{})
 		cmd.Dir = cleanWd
@@ -97,21 +163,27 @@ func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput)
 	duration := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		slog.WarnContext(ctx, "[tool/shell] command failed", slog.String("command", name), slog.Int64("duration_ms", duration), slog.Any("error", err))
+		slog.WarnContext(ctx, "[tool/shell] command failed",
+			slog.String("command", input.Command),
+			slog.Int64("duration_ms", duration),
+			slog.Any("error", err))
 		return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
 	}
 
 	outputStr := string(output)
-	slog.InfoContext(ctx, "[tool/shell] command completed", slog.String("command", name), slog.Int64("duration_ms", duration), slog.Int("output_len", len(outputStr)))
+
+	// Filter HTML content if this is a curl command returning HTML the content will be extremely large
+	if isCurlCommand(input.Command) && isHTMLContent(outputStr) {
+		outputStr = filterHTMLContent(outputStr)
+	}
 
 	// truncate output
 	if len(outputStr) > maxAllowedShellOutputLen {
-		more := len(output) - maxAllowedShellOutputLen
+		more := len(outputStr) - maxAllowedShellOutputLen
 		outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
-		slog.DebugContext(ctx, "[tool/shell] output truncated", slog.Int("truncated_chars", more))
 	}
 
-	return string(output), nil
+	return outputStr, nil
 }
 
 func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) error {

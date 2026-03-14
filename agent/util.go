@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"fmt"
+
 	"github.com/ryanreadbooks/tokkibot/agent/context/session"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/llm/estimator"
+	"github.com/ryanreadbooks/tokkibot/llm/factory"
 	schema "github.com/ryanreadbooks/tokkibot/llm/schema"
 )
 
@@ -77,6 +81,65 @@ func (a *Agent) ListMcpServers() []*tool.McpServerStatus {
 		return a.mcpManager.ListServers()
 	}
 	return nil
+}
+
+func (a *Agent) GetModel() string {
+	return a.cfg.Model
+}
+
+func (a *Agent) GetProvider() string {
+	return a.cfg.Provider
+}
+
+func (a *Agent) SetModel(model string) {
+	a.cfg.Model = model
+}
+
+func (a *Agent) SetProvider(provider string) error {
+	return a.SetProviderAndModel(provider, "")
+}
+
+// SetProviderAndModel switches the provider and model, recreating the LLM client
+func (a *Agent) SetProviderAndModel(provider, model string) error {
+	cfg := config.GetConfig()
+	providerCfg, ok := cfg.Providers[provider]
+	if !ok {
+		return fmt.Errorf("provider not found: %s", provider)
+	}
+
+	if model == "" {
+		model = providerCfg.DefaultModel
+	}
+
+	// Create new LLM client with the new provider config
+	newLLM, err := factory.NewLLM(
+		factory.WithAPIKey(providerCfg.ApiKey),
+		factory.WithBaseURL(providerCfg.BaseURL),
+		factory.WithStyle(factory.Style(providerCfg.Style)),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create LLM client: %w", err)
+	}
+
+	// Update agent config and LLM client
+	a.cfg.Provider = provider
+	a.cfg.Model = model
+	a.llm = newLLM
+
+	return nil
+}
+
+func (a *Agent) GetToolCount() int {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
+	return len(a.tools)
+}
+
+func (a *Agent) GetMcpToolCount() int {
+	if a.mcpLoaded.Load() {
+		return len(a.mcpManager.ListTools())
+	}
+	return 0
 }
 
 // ClearContext clears all messages in a session

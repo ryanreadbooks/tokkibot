@@ -57,7 +57,7 @@ func getHttpClient() *http.Client {
 }
 
 type WebFetchInput struct {
-	URL string `json:"url" jsonschema:"description=The URL to fetch"`
+	URL string `json:"url" jsonschema:"description=The URL to fetch, use this over shell curl"`
 }
 
 type WebFetchOutput struct {

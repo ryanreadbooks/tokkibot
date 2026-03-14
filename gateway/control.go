@@ -6,6 +6,7 @@ import (
 
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/config"
 )
 
 // ControlCommand represents a control command from user
@@ -18,6 +19,8 @@ const (
 	ControlCmdCompact ControlCommand = "/compact"
 	ControlCmdSkill   ControlCommand = "/skill"
 	ControlCmdMcp     ControlCommand = "/mcp"
+	ControlCmdModel   ControlCommand = "/model"
+	ControlCmdStatus  ControlCommand = "/status"
 	ControlCmdHelp    ControlCommand = "/help"
 )
 
@@ -27,6 +30,8 @@ var controlCommands = []ControlCommand{
 	ControlCmdCompact,
 	ControlCmdSkill,
 	ControlCmdMcp,
+	ControlCmdModel,
+	ControlCmdStatus,
 	ControlCmdHelp,
 }
 
@@ -50,6 +55,9 @@ const helpMessage = `**Available Commands:**
 - /skill info <name> - Show skill details
 - /mcp list - List all MCP servers and status
 - /mcp info <server> - Show server tools
+- /model - Show current model and available providers
+- /model set <provider> [model] - Switch provider and model
+- /status - Show current session status (model, context size, etc.)
 - /help - Show this help message`
 
 // handleControl handles control commands and returns true if handled
@@ -69,6 +77,10 @@ func (g *Gateway) handleControl(rawMsg *chmodel.IncomingMessage, cmd ControlComm
 		g.handleSkill(rawMsg)
 	case ControlCmdMcp:
 		g.handleMcp(rawMsg)
+	case ControlCmdModel:
+		g.handleModel(rawMsg)
+	case ControlCmdStatus:
+		g.handleStatus(rawMsg)
 	case ControlCmdHelp:
 		g.handleHelp(rawMsg)
 	}
@@ -235,6 +247,164 @@ func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
 		fmt.Fprintf(&sb, "| %s | %s | %s |\n", s.Name, status, tools)
 	}
 	fmt.Fprintf(&sb, "\nUse `/mcp info <server>` to see tools")
+	g.sendResponse(rawMsg, sb.String())
+}
+
+func (g *Gateway) handleModel(rawMsg *chmodel.IncomingMessage) {
+	content := strings.TrimSpace(rawMsg.Content)
+	args := strings.TrimPrefix(content, string(ControlCmdModel))
+	args = strings.TrimSpace(args)
+
+	parts := strings.Fields(args)
+	subCmd := ""
+	if len(parts) > 0 {
+		subCmd = strings.ToLower(parts[0])
+	}
+
+	switch subCmd {
+	case "", "list":
+		g.handleModelList(rawMsg)
+	case "set":
+		if len(parts) < 2 {
+			g.sendResponse(rawMsg, "Usage: /model set <provider> [model]")
+			return
+		}
+		provider := parts[1]
+		model := ""
+		if len(parts) >= 3 {
+			model = parts[2]
+		}
+		g.handleModelSet(rawMsg, provider, model)
+	default:
+		g.sendResponse(rawMsg, fmt.Sprintf("Unknown model subcommand: %s\nUsage: /model list | /model set <provider> [model]", subCmd))
+	}
+}
+
+func (g *Gateway) handleModelList(rawMsg *chmodel.IncomingMessage) {
+	ag := g.agentForAdapter(rawMsg.Channel)
+	cfg := config.GetConfig()
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Current Model**\n")
+	fmt.Fprintf(&sb, "- Provider: `%s`\n", ag.GetProvider())
+	fmt.Fprintf(&sb, "- Model: `%s`\n\n", ag.GetModel())
+
+	fmt.Fprintf(&sb, "**Available Providers**\n\n")
+	fmt.Fprintf(&sb, "| Provider | Default Model | Thinking |\n")
+	fmt.Fprintf(&sb, "|----------|---------------|----------|\n")
+
+	for name, providerCfg := range cfg.Providers {
+		thinking := "❌"
+		if providerCfg.IsThinkingEnabled() {
+			thinking = "✅"
+		}
+		current := ""
+		if name == ag.GetProvider() {
+			current = " ✓"
+		}
+		fmt.Fprintf(&sb, "| %s%s | %s | %s |\n", name, current, providerCfg.DefaultModel, thinking)
+	}
+
+	fmt.Fprintf(&sb, "\nUse `/model set <provider> [model]` to switch")
+	g.sendResponse(rawMsg, sb.String())
+}
+
+func (g *Gateway) handleModelSet(rawMsg *chmodel.IncomingMessage, provider, model string) {
+	// Check if there's a running task - cannot switch model during execution
+	chatKey := rawMsg.Key()
+	g.runningMu.RLock()
+	_, isRunning := g.running[chatKey]
+	g.runningMu.RUnlock()
+
+	if isRunning {
+		g.sendResponse(rawMsg, "Cannot switch model while a task is running. Please wait for the task to complete or use `/stop` first.")
+		return
+	}
+
+	cfg := config.GetConfig()
+
+	providerCfg, ok := cfg.Providers[provider]
+	if !ok {
+		var available []string
+		for name := range cfg.Providers {
+			available = append(available, name)
+		}
+		g.sendResponse(rawMsg, fmt.Sprintf("Provider not found: %s\nAvailable providers: %s", provider, strings.Join(available, ", ")))
+		return
+	}
+
+	if model == "" {
+		model = providerCfg.DefaultModel
+	}
+
+	ag := g.agentForAdapter(rawMsg.Channel)
+	oldProvider := ag.GetProvider()
+	oldModel := ag.GetModel()
+
+	// Switch provider and model (this recreates the LLM client)
+	if err := ag.SetProviderAndModel(provider, model); err != nil {
+		g.sendResponse(rawMsg, fmt.Sprintf("Failed to switch model: %s", err.Error()))
+		return
+	}
+
+	// Persist to config file
+	if err := config.UpdateAgentProviderAndModel(ag.Name(), provider, model); err != nil {
+		g.sendResponse(rawMsg, fmt.Sprintf("Model switched but failed to save config: %s", err.Error()))
+		return
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Model Switched**\n\n")
+	fmt.Fprintf(&sb, "| | Before | After |\n")
+	fmt.Fprintf(&sb, "|--|--------|-------|\n")
+	fmt.Fprintf(&sb, "| Provider | %s | %s |\n", oldProvider, provider)
+	fmt.Fprintf(&sb, "| Model | %s | %s |\n", oldModel, model)
+	fmt.Fprintf(&sb, "\n✅ Config saved")
+
+	g.sendResponse(rawMsg, sb.String())
+}
+
+func (g *Gateway) handleStatus(rawMsg *chmodel.IncomingMessage) {
+	channel := rawMsg.Channel.String()
+	chatId := rawMsg.ChatId
+	ag := g.agentForAdapter(rawMsg.Channel)
+
+	// Get context tokens
+	contextTokens := ag.GetCurrentContextTokens(channel, chatId)
+
+	// Check if task is running
+	chatKey := rawMsg.Key()
+	g.runningMu.RLock()
+	_, isRunning := g.running[chatKey]
+	g.runningMu.RUnlock()
+
+	runningStatus := "Idle"
+	if isRunning {
+		runningStatus = "Running"
+	}
+
+	// Get MCP server count
+	mcpServers := ag.ListMcpServers()
+	mcpServerCount := len(mcpServers)
+	mcpOkCount := 0
+	for _, s := range mcpServers {
+		if s.OK {
+			mcpOkCount++
+		}
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Session Status**\n\n")
+	fmt.Fprintf(&sb, "| Item | Value |\n")
+	fmt.Fprintf(&sb, "|------|-------|\n")
+	fmt.Fprintf(&sb, "| Model | %s |\n", ag.GetModel())
+	fmt.Fprintf(&sb, "| Provider | %s |\n", ag.GetProvider())
+	fmt.Fprintf(&sb, "| Context Size | %d tokens |\n", contextTokens)
+	fmt.Fprintf(&sb, "| Task Status | %s |\n", runningStatus)
+	fmt.Fprintf(&sb, "| Built-in Tools | %d |\n", ag.GetToolCount())
+	fmt.Fprintf(&sb, "| MCP Tools | %d |\n", ag.GetMcpToolCount())
+	fmt.Fprintf(&sb, "| MCP Servers | %d/%d online |\n", mcpOkCount, mcpServerCount)
+
 	g.sendResponse(rawMsg, sb.String())
 }
 
