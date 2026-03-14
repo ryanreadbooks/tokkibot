@@ -1,15 +1,13 @@
-//go:build !windows
+//go:build linux
 
 package guard
 
 import "regexp"
 
-// Commands that require user confirmation before execution
 var ConfirmRequiredPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\brm\s+.*`), // Any rm command
+	regexp.MustCompile(`\brm\s+.*`),
 }
 
-// Commands that are completely blocked (no confirmation)
 var DangerousPatterns = []*regexp.Regexp{
 	// destructive rm
 	regexp.MustCompile(`\brm\s+-[^\s]*(rf|fr)[^\s]*\s+(/|~|\$HOME|/\*)\b`),
