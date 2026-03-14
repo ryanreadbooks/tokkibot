@@ -326,7 +326,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 	}
 
 	// reaction to message received
-	reactionId := a.sendMessageReaction(ctx, messageId, emoji.Get)
+	reactionId := a.sendMessageReaction(ctx, messageId, emoji.Typing)
 
 	sourceCtx, sourceCancel := context.WithCancel(ctx)
 	a.cancelMu.Lock()
@@ -338,6 +338,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		adapter:                   a,
 		ctx:                       sourceCtx,
 		messageId:                 messageId,
+		reactionId:                reactionId,
 		contentElementId:          "markdown_1",
 		reasoningContentElementId: "reasoning_markdown_1",
 		seq:                       1,
@@ -375,9 +376,10 @@ const (
 )
 
 type larkStreamState struct {
-	adapter   *LarkAdapter
-	ctx       context.Context
-	messageId string
+	adapter    *LarkAdapter
+	ctx        context.Context
+	messageId  string
+	reactionId string
 
 	thinkingFinished atomic.Bool
 	thinkingEnabled  bool
@@ -533,7 +535,7 @@ func (s *larkStreamState) onDone() {
 	}
 	s.mu.Unlock()
 
-	s.adapter.sendMessageReaction(cleanupCtx, s.messageId, emoji.DONE)
+	s.adapter.deleteMessageReaction(cleanupCtx, s.messageId, s.reactionId)
 
 	// cancel sourceCtx and clean up — this is the right place since the agent is truly done
 	s.adapter.cancelMu.Lock()

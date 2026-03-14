@@ -1,5 +1,6 @@
 package emoji
 
+// https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce
 const (
 	OK                       = "OK"
 	THUMBSUP                 = "THUMBSUP"
