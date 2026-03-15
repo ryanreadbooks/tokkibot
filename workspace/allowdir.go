@@ -32,6 +32,8 @@ func GetAllowedReadPaths(agentWorkspace string) []string {
 	for _, dir := range agentReadDirs {
 		paths = append(paths, filepath.Join(agentWorkspace, dir))
 	}
+
+	paths = append(paths, agentWorkspace)
 	return paths
 }
 
@@ -41,5 +43,7 @@ func GetAllowedWritePaths(agentWorkspace string) []string {
 	for _, dir := range agentWriteDirs {
 		paths = append(paths, filepath.Join(agentWorkspace, dir))
 	}
+	paths = append(paths, agentWorkspace)
+	
 	return paths
 }

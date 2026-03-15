@@ -56,25 +56,32 @@ func ReadFile(allowDirs []string) tool.Invoker {
 			return "", err
 		}
 
-		start := 0
-		if input.Offset != 0 {
-			start = input.Offset - 1
-		}
-		start = max(start, 0)
-		end := len(lines)
-		if input.Limit != 0 {
-			end = start + input.Limit
-		}
-		end = min(end, len(lines))
+	totalLines := len(lines)
+	start := 0
+	if input.Offset != 0 {
+		start = input.Offset - 1
+	}
+	start = max(start, 0)
 
-		selected := lines[start:end]
-		numberedLines := []string{}
-		for i := range selected {
-			numberedLines = append(numberedLines, fmt.Sprintf("%d|%s", start+i+1, strings.TrimRight(selected[i], "\n")))
-		}
+	// Handle offset beyond file length
+	if start >= totalLines {
+		return fmt.Sprintf("File has only %d lines, but offset %d was requested. No content to return.", totalLines, input.Offset), nil
+	}
 
-		slog.InfoContext(ctx, "[tool/file] file read completed", slog.String("path", cleanPath), slog.Int("total_lines", len(lines)), slog.Int("returned_lines", len(selected)))
-		return strings.Join(numberedLines, "\n"), nil
+	end := totalLines
+	if input.Limit != 0 {
+		end = start + input.Limit
+	}
+	end = min(end, totalLines)
+
+	selected := lines[start:end]
+	numberedLines := make([]string, 0, len(selected))
+	for i := range selected {
+		numberedLines = append(numberedLines, fmt.Sprintf("%d|%s", start+i+1, strings.TrimRight(selected[i], "\n")))
+	}
+
+	slog.InfoContext(ctx, "[tool/file] file read completed", slog.String("path", cleanPath), slog.Int("total_lines", totalLines), slog.Int("returned_lines", len(selected)))
+	return strings.Join(numberedLines, "\n"), nil
 	})
 }
 

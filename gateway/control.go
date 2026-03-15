@@ -61,26 +61,26 @@ const helpMessage = `**Available Commands:**
 - /help - Show this help message`
 
 // handleControl handles control commands and returns true if handled
-func (g *Gateway) handleControl(rawMsg *chmodel.IncomingMessage, cmd ControlCommand) bool {
+func (g *Gateway) handleControl(rawMsg *chmodel.IncomingMessage, cmd ControlCommand, agentName string) bool {
 	if cmd == ControlCmdNone {
 		return false
 	}
 
 	switch cmd {
 	case ControlCmdStop:
-		g.handleStop(rawMsg)
+		g.handleStop(rawMsg, agentName)
 	case ControlCmdNew:
-		g.handleNew(rawMsg)
+		g.handleNew(rawMsg, agentName)
 	case ControlCmdCompact:
-		g.handleCompact(rawMsg)
+		g.handleCompact(rawMsg, agentName)
 	case ControlCmdSkill:
-		g.handleSkill(rawMsg)
+		g.handleSkill(rawMsg, agentName)
 	case ControlCmdMcp:
-		g.handleMcp(rawMsg)
+		g.handleMcp(rawMsg, agentName)
 	case ControlCmdModel:
-		g.handleModel(rawMsg)
+		g.handleModel(rawMsg, agentName)
 	case ControlCmdStatus:
-		g.handleStatus(rawMsg)
+		g.handleStatus(rawMsg, agentName)
 	case ControlCmdHelp:
 		g.handleHelp(rawMsg)
 	}
@@ -88,11 +88,11 @@ func (g *Gateway) handleControl(rawMsg *chmodel.IncomingMessage, cmd ControlComm
 	return true
 }
 
-func (g *Gateway) handleStop(rawMsg *chmodel.IncomingMessage) {
-	chatKey := rawMsg.Key()
+func (g *Gateway) handleStop(rawMsg *chmodel.IncomingMessage, agentName string) {
+	sessionKey := fmt.Sprintf("%s:%s", agentName, rawMsg.Key())
 
 	g.runningMu.RLock()
-	cancel, exists := g.running[chatKey]
+	cancel, exists := g.running[sessionKey]
 	g.runningMu.RUnlock()
 
 	if !exists {
@@ -104,10 +104,10 @@ func (g *Gateway) handleStop(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, "Task stop signal sent")
 }
 
-func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage, agentName string) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 	if err := ag.ClearContext(channel, chatId); err != nil {
 		g.sendResponse(rawMsg, "Failed to clear session: "+err.Error())
 		return
@@ -115,10 +115,10 @@ func (g *Gateway) handleNew(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, "New session started")
 }
 
-func (g *Gateway) handleCompact(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleCompact(rawMsg *chmodel.IncomingMessage, agentName string) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 	compressed, err := ag.CompactContext(rawMsg.Context(), channel, chatId)
 	if err != nil {
 		g.sendResponse(rawMsg, "Failed to compact context: "+err.Error())
@@ -131,12 +131,11 @@ func (g *Gateway) handleHelp(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, helpMessage)
 }
 
-func (g *Gateway) handleSkill(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleSkill(rawMsg *chmodel.IncomingMessage, agentName string) {
 	content := strings.TrimSpace(rawMsg.Content)
 	args := strings.TrimPrefix(content, string(ControlCmdSkill))
 	args = strings.TrimSpace(args)
 
-	// Parse subcommand and arguments
 	parts := strings.SplitN(args, " ", 2)
 	subCmd := ""
 	subArg := ""
@@ -149,16 +148,16 @@ func (g *Gateway) handleSkill(rawMsg *chmodel.IncomingMessage) {
 
 	switch subCmd {
 	case "", "list":
-		g.handleSkillList(rawMsg)
+		g.handleSkillList(rawMsg, agentName)
 	case "info":
-		g.handleSkillInfo(rawMsg, subArg)
+		g.handleSkillInfo(rawMsg, subArg, agentName)
 	default:
 		g.sendResponse(rawMsg, fmt.Sprintf("Unknown skill subcommand: %s\nUsage: /skill list | /skill info <name>", subCmd))
 	}
 }
 
-func (g *Gateway) handleSkillList(rawMsg *chmodel.IncomingMessage) {
-	ag := g.agentForAdapter(rawMsg.Channel)
+func (g *Gateway) handleSkillList(rawMsg *chmodel.IncomingMessage, agentName string) {
+	ag := g.agentByName(agentName)
 	skills := ag.AvailableSkills()
 	if len(skills) == 0 {
 		g.sendResponse(rawMsg, "No skills available")
@@ -173,13 +172,13 @@ func (g *Gateway) handleSkillList(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleSkillInfo(rawMsg *chmodel.IncomingMessage, name string) {
+func (g *Gateway) handleSkillInfo(rawMsg *chmodel.IncomingMessage, name string, agentName string) {
 	if name == "" {
 		g.sendResponse(rawMsg, "Usage: /skill info <name>")
 		return
 	}
 
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 	skills := ag.AvailableSkills()
 	for _, s := range skills {
 		if s.Name() == name {
@@ -200,7 +199,7 @@ func (g *Gateway) handleSkillInfo(rawMsg *chmodel.IncomingMessage, name string) 
 	g.sendResponse(rawMsg, fmt.Sprintf("Skill not found: %s", name))
 }
 
-func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage, agentName string) {
 	content := strings.TrimSpace(rawMsg.Content)
 	args := strings.TrimPrefix(content, string(ControlCmdMcp))
 	args = strings.TrimSpace(args)
@@ -217,16 +216,16 @@ func (g *Gateway) handleMcp(rawMsg *chmodel.IncomingMessage) {
 
 	switch subCmd {
 	case "", "list":
-		g.handleMcpList(rawMsg)
+		g.handleMcpList(rawMsg, agentName)
 	case "info":
-		g.handleMcpInfo(rawMsg, subArg)
+		g.handleMcpInfo(rawMsg, subArg, agentName)
 	default:
 		g.sendResponse(rawMsg, fmt.Sprintf("Unknown mcp subcommand: %s\nUsage: /mcp list | /mcp info <name>", subCmd))
 	}
 }
 
-func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
-	ag := g.agentForAdapter(rawMsg.Channel)
+func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage, agentName string) {
+	ag := g.agentByName(agentName)
 	servers := ag.ListMcpServers()
 	if len(servers) == 0 {
 		g.sendResponse(rawMsg, "No MCP servers configured")
@@ -250,7 +249,7 @@ func (g *Gateway) handleMcpList(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleModel(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleModel(rawMsg *chmodel.IncomingMessage, agentName string) {
 	content := strings.TrimSpace(rawMsg.Content)
 	args := strings.TrimPrefix(content, string(ControlCmdModel))
 	args = strings.TrimSpace(args)
@@ -263,7 +262,7 @@ func (g *Gateway) handleModel(rawMsg *chmodel.IncomingMessage) {
 
 	switch subCmd {
 	case "", "list":
-		g.handleModelList(rawMsg)
+		g.handleModelList(rawMsg, agentName)
 	case "set":
 		if len(parts) < 2 {
 			g.sendResponse(rawMsg, "Usage: /model set <provider> [model]")
@@ -274,14 +273,14 @@ func (g *Gateway) handleModel(rawMsg *chmodel.IncomingMessage) {
 		if len(parts) >= 3 {
 			model = parts[2]
 		}
-		g.handleModelSet(rawMsg, provider, model)
+		g.handleModelSet(rawMsg, provider, model, agentName)
 	default:
 		g.sendResponse(rawMsg, fmt.Sprintf("Unknown model subcommand: %s\nUsage: /model list | /model set <provider> [model]", subCmd))
 	}
 }
 
-func (g *Gateway) handleModelList(rawMsg *chmodel.IncomingMessage) {
-	ag := g.agentForAdapter(rawMsg.Channel)
+func (g *Gateway) handleModelList(rawMsg *chmodel.IncomingMessage, agentName string) {
+	ag := g.agentByName(agentName)
 	cfg := config.GetConfig()
 
 	var sb strings.Builder
@@ -309,11 +308,11 @@ func (g *Gateway) handleModelList(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleModelSet(rawMsg *chmodel.IncomingMessage, provider, model string) {
+func (g *Gateway) handleModelSet(rawMsg *chmodel.IncomingMessage, provider, model string, agentName string) {
 	// Check if there's a running task - cannot switch model during execution
-	chatKey := rawMsg.Key()
+	sessionKey := fmt.Sprintf("%s:%s", agentName, rawMsg.Key())
 	g.runningMu.RLock()
-	_, isRunning := g.running[chatKey]
+	_, isRunning := g.running[sessionKey]
 	g.runningMu.RUnlock()
 
 	if isRunning {
@@ -337,7 +336,7 @@ func (g *Gateway) handleModelSet(rawMsg *chmodel.IncomingMessage, provider, mode
 		model = providerCfg.DefaultModel
 	}
 
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 	oldProvider := ag.GetProvider()
 	oldModel := ag.GetModel()
 
@@ -364,18 +363,18 @@ func (g *Gateway) handleModelSet(rawMsg *chmodel.IncomingMessage, provider, mode
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleStatus(rawMsg *chmodel.IncomingMessage) {
+func (g *Gateway) handleStatus(rawMsg *chmodel.IncomingMessage, agentName string) {
 	channel := rawMsg.Channel.String()
 	chatId := rawMsg.ChatId
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 
 	// Get context tokens
 	contextTokens := ag.GetCurrentContextTokens(channel, chatId)
 
 	// Check if task is running
-	chatKey := rawMsg.Key()
+	sessionKey := fmt.Sprintf("%s:%s", agentName, rawMsg.Key())
 	g.runningMu.RLock()
-	_, isRunning := g.running[chatKey]
+	_, isRunning := g.running[sessionKey]
 	g.runningMu.RUnlock()
 
 	runningStatus := "Idle"
@@ -408,13 +407,13 @@ func (g *Gateway) handleStatus(rawMsg *chmodel.IncomingMessage) {
 	g.sendResponse(rawMsg, sb.String())
 }
 
-func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName string) {
+func (g *Gateway) handleMcpInfo(rawMsg *chmodel.IncomingMessage, serverName string, agentName string) {
 	if serverName == "" {
 		g.sendResponse(rawMsg, "Usage: /mcp info <server>")
 		return
 	}
 
-	ag := g.agentForAdapter(rawMsg.Channel)
+	ag := g.agentByName(agentName)
 	servers := ag.ListMcpServers()
 	var targetServer *tool.McpServerStatus
 	for _, s := range servers {

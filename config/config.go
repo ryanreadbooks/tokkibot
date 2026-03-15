@@ -36,8 +36,9 @@ type ProviderConfig struct {
 }
 
 type AgentBindingMatch struct {
-	Channel string `json:"channel"`
-	Account string `json:"account"`
+	Channel string   `json:"channel"`
+	Account string   `json:"account"`
+	ChatIds []string `json:"chatIds,omitempty"` // optional: specific chatIds this agent handles; empty means all
 }
 
 type AgentBinding struct {

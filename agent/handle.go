@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,16 @@ func (a *Agent) handleIncomingMessage(
 	ctx context.Context,
 	userMsg *UserMessage,
 	opt *askOptionImpl,
-) string {
+) (result string) {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.ErrorContext(ctx, "[agent] message handling panic",
+				slog.Any("error", err),
+				slog.String("stack", string(debug.Stack())))
+
+			result = "I encountered an error while processing your request. Please try again later."
+		}
+	}()
 	slog.InfoContext(ctx, "[agent] handling incoming message", slog.Int("content_len", len(userMsg.Content)))
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
@@ -174,6 +184,17 @@ func (a *Agent) handleIncomingMessageStream(
 	emitter StreamEmitter,
 	opt *askOptionImpl,
 ) {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.ErrorContext(ctx, "[agent] message handling panic",
+				slog.Any("error", err),
+				slog.String("stack", string(debug.Stack())))
+			emitter.EmitContent(&EmittedContent{
+				Round:   -1,
+				Content: "I encountered an error while processing your request. Please try again later.",
+			})
+		}
+	}()
 	defer emitter.EmitDone()
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {

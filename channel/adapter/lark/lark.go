@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/channel/adapter"
-	// "github.com/ryanreadbooks/tokkibot/channel/adapter/lark/card"
 	"github.com/ryanreadbooks/tokkibot/channel/adapter/lark/emoji"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/pkg/httpx"
@@ -24,27 +23,41 @@ import (
 
 var _ adapter.Adapter = (*LarkAdapter)(nil)
 
-// slogAdapter adapts slog to larkcore.Logger interface
-type slogAdapter struct{}
+type slogAdapter struct {
+	level larkcore.LogLevel
+}
 
 func (s *slogAdapter) Debug(ctx context.Context, args ...any) {
+	if s.level > larkcore.LogLevelDebug {
+		return
+	}
 	slog.DebugContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
 }
 
 func (s *slogAdapter) Info(ctx context.Context, args ...any) {
+	if s.level > larkcore.LogLevelInfo {
+		return
+	}
 	slog.InfoContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
 }
 
 func (s *slogAdapter) Warn(ctx context.Context, args ...any) {
+	if s.level > larkcore.LogLevelWarn {
+		return
+	}
 	slog.WarnContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
 }
 
 func (s *slogAdapter) Error(ctx context.Context, args ...any) {
+	if s.level > larkcore.LogLevelError {
+		return
+	}
 	slog.ErrorContext(ctx, "[lark-sdk]", "msg", fmt.Sprint(args...))
 }
 
 // feishu
 type LarkAdapter struct {
+	cfg   LarkConfig
 	cli   *lark.Client
 	wscli *ws.Client
 
@@ -56,23 +69,29 @@ type LarkAdapter struct {
 
 	pendingConfirmEvtsMu sync.Mutex
 	pendingConfirmEvts   map[string]*model.ConfirmEvent
+
+	botOpenIdMu sync.RWMutex
+	botOpenId   string
 }
 
 type LarkConfig struct {
-	AppId     string `json:"appId"`
-	AppSecret string `json:"appSecret"`
+	AppId          string `json:"appId"`
+	AppSecret      string `json:"appSecret"`
+	RequireMention bool   `json:"requireMention"` // 当机器人处于群聊中时 只有@机器人时才处理消息
 }
 
 func NewAdapter(cfg LarkConfig) *LarkAdapter {
 	eventDispatcher := dispatcher.NewEventDispatcher("", "")
 
 	// Create slog-based logger for lark SDK
-	logger := &slogAdapter{}
+	logger := &slogAdapter{
+		level: larkcore.LogLevelWarn,
+	}
 
 	wscli := ws.NewClient(
 		cfg.AppId,
 		cfg.AppSecret,
-		ws.WithLogLevel(larkcore.LogLevelInfo),
+		ws.WithLogLevel(logger.level),
 		ws.WithLogger(logger),
 		ws.WithEventHandler(eventDispatcher),
 		ws.WithAutoReconnect(true),
@@ -80,14 +99,14 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 	cli := lark.NewClient(
 		cfg.AppId,
 		cfg.AppSecret,
-		lark.WithLogLevel(larkcore.LogLevelWarn),
+		lark.WithLogLevel(logger.level),
 		lark.WithLogger(logger),
 		lark.WithHttpClient(httpx.NewRetryClient(httpx.DefaultRetryConfig())),
 	)
 	adapter := &LarkAdapter{
-		wscli: wscli,
-		cli:   cli,
-
+		wscli:   wscli,
+		cli:     cli,
+		cfg:     cfg,
 		input:   make(chan *model.IncomingMessage, 1),
 		output:  make(chan *model.OutgoingMessage, 16),
 		cancels: make(map[string]context.CancelFunc),
@@ -95,6 +114,17 @@ func NewAdapter(cfg LarkConfig) *LarkAdapter {
 		pendingConfirmEvts: make(map[string]*model.ConfirmEvent),
 	}
 	eventDispatcher.OnP2MessageReceiveV1(adapter.onMessageReceive)
+
+	// init get openid
+	botOpenId, err := adapter.GetBotOpenId(context.Background())
+	if err != nil {
+		slog.ErrorContext(context.Background(), "failed to get bot open id", "error", err)
+	} else {
+		adapter.botOpenIdMu.Lock()
+		adapter.botOpenId = botOpenId
+		adapter.botOpenIdMu.Unlock()
+		slog.Info("bot open id", "bot_open_id", botOpenId)
+	}
 
 	return adapter
 }
@@ -186,26 +216,51 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 		return nil
 	}
 
-	msg := event.Event.Message
-	sender := event.Event.Sender
+	var (
+		senderId string
+		msg      = event.Event.Message
+		sender   = event.Event.Sender
+	)
 
 	// safely extract sender id
-	var senderId string
 	if sender.SenderId != nil {
 		senderId = derefStr(sender.SenderId.OpenId)
 	}
 
-	// safely extract message fields
-	messageId := derefStr(msg.MessageId)
-	messageType := derefStr(msg.MessageType)
-	chatId := derefStr(msg.ChatId)
-	messageContent := derefStr(msg.Content)
-	parentId := derefStr(msg.ParentId)
+	var (
+		// safely extract message fields
+		messageId      = derefStr(msg.MessageId)
+		messageType    = derefStr(msg.MessageType)
+		chatId         = derefStr(msg.ChatId)
+		messageContent = derefStr(msg.Content) // of json format
+		parentId       = derefStr(msg.ParentId)
+		chatType       = derefStr(msg.ChatType) // p2p, group, topic_group
+	)
 
 	// validate required fields
 	if senderId == "" || messageId == "" {
 		slog.WarnContext(ctx, "missing required message fields", "sender_id", senderId, "message_id", messageId)
 		return nil
+	}
+
+	if chatType == "group" && a.cfg.RequireMention {
+		botOpenId, err := a.GetBotOpenId(ctx)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to get bot open id", "error", err)
+			return nil
+		}
+
+		amIMentioned := false
+		for _, mention := range event.Event.Message.Mentions {
+			if mention.Id != nil && derefStr(mention.Id.OpenId) == botOpenId {
+				amIMentioned = true
+				break
+			}
+		}
+
+		if !amIMentioned {
+			return nil
+		}
 	}
 
 	var (
@@ -216,7 +271,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 
 	switch messageType {
 	case imv1.MsgTypeText:
-		content, err = a.handleTextMessage(messageContent)
+		content, _, err = a.handleTextMessage(messageContent)
 	case imv1.MsgTypePost:
 		content, attachments, err = a.handlePostMessage(ctx, messageContent, messageId)
 	case imv1.MsgTypeImage:

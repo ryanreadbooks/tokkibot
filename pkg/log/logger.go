@@ -58,7 +58,7 @@ func rotateLogFile() error {
 	logFile = f
 	currentDate = today
 
-	// Create a JSON handler with time formatting
+	// Create a JSON handler with time formatting and short source paths
 	jsonHandler := slog.NewJSONHandler(logFile, &slog.HandlerOptions{
 		Level:     slog.LevelDebug,
 		AddSource: true,
@@ -66,6 +66,16 @@ func rotateLogFile() error {
 			if a.Key == slog.TimeKey {
 				t := a.Value.Time()
 				a.Value = slog.StringValue(t.Format("2006-01-02 15:04:05.000"))
+			}
+			if a.Key == slog.SourceKey {
+				if src, ok := a.Value.Any().(*slog.Source); ok {
+					// Keep only filename instead of full path
+					a.Value = slog.AnyValue(&slog.Source{
+						Function: src.Function,
+						File:     filepath.Base(src.File),
+						Line:     src.Line,
+					})
+				}
 			}
 			return a
 		},

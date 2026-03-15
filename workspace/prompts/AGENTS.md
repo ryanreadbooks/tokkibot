@@ -140,6 +140,7 @@ When something fails:
 
 | Variable | Value |
 |----------|-------|
+| Date | `{{.DateWithTz}}` |
 | Runtime | `{{.Runtime}}` |
 | Current Directory(cwd) | `{{.Cwd}}` |
 

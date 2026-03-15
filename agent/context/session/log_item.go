@@ -16,9 +16,8 @@ func NewLogItemId() string {
 	return strings.ReplaceAll(id.String(), "-", "")
 }
 
-// LogItem every messages into session file
 type LogItem struct {
-	Id       string         `json:"id"` // unique msg id
+	Id       string         `json:"id"`
 	Role     param.Role     `json:"role"`
 	Created  int64          `json:"created"`
 	Message  *param.Message `json:"message,omitzero"`
@@ -29,27 +28,25 @@ type LogItemMeta struct {
 	ImageRef map[int]string `json:"image_ref,omitzero"`
 }
 
-func (i *LogItem) MarshalJSON() ([]byte, error) {
+// MarshalJSON replaces inline image data with media refs for disk storage.
+func (item *LogItem) MarshalJSON() ([]byte, error) {
 	type alias LogItem
 
-	if !i.Role.User() || !i.HasImageRef() {
-		return json.Marshal((*alias)(i))
+	if !item.Role.User() || !item.HasImageRef() {
+		return json.Marshal((*alias)(item))
 	}
 
 	var copied LogItem
-	copier.CopyWithOption(&copied, i, copier.Option{DeepCopy: true})
+	copier.CopyWithOption(&copied, item, copier.Option{DeepCopy: true})
 
 	if copied.Message != nil && copied.Message.User != nil &&
 		len(copied.Message.User.ContentParts) > 0 {
 		for idx, part := range copied.Message.User.ContentParts {
-			if part == nil {
+			if part == nil || part.ImageURL == nil {
 				continue
 			}
-
-			if part.ImageURL != nil {
-				if imageRefName, ok := copied.Metadata.ImageRef[idx]; ok {
-					part.ImageURL.URL = fmt.Sprintf("[image](%s)", imageRefName)
-				}
+			if imageRefName, ok := copied.Metadata.ImageRef[idx]; ok {
+				part.ImageURL.URL = fmt.Sprintf("[image](%s)", imageRefName)
 			}
 		}
 	}
@@ -57,31 +54,29 @@ func (i *LogItem) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*alias)(&copied))
 }
 
-func (i *LogItem) UnmarshalJSON(data []byte) error {
-	type Alias LogItem
+// UnmarshalJSON expands media refs back to actual image data.
+func (item *LogItem) UnmarshalJSON(data []byte) error {
+	type alias LogItem
 
-	aux := (*Alias)(i)
-	if err := json.Unmarshal(data, aux); err != nil {
+	if err := json.Unmarshal(data, (*alias)(item)); err != nil {
 		return err
 	}
 
-	if !i.Role.User() || !i.HasImageRef() ||
-		i.Message == nil || i.Message.User == nil ||
-		len(i.Message.User.ContentParts) == 0 {
+	if !item.Role.User() || !item.HasImageRef() ||
+		item.Message == nil || item.Message.User == nil ||
+		len(item.Message.User.ContentParts) == 0 {
 		return nil
 	}
 
-	for _, part := range i.Message.User.ContentParts {
+	for _, part := range item.Message.User.ContentParts {
 		if part == nil || part.ImageURL == nil {
 			continue
 		}
 
-		// expand ref: [image](@medias/xxx) -> data
 		matches := regMediaRef.FindStringSubmatch(part.ImageURL.URL)
 		if len(matches) > 0 {
 			refName := matches[1]
-			actualData, err := media.LoadMedia(refName)
-			if err == nil && len(actualData) > 0 {
+			if actualData, err := media.LoadMedia(refName); err == nil && len(actualData) > 0 {
 				part.ImageURL.URL = string(actualData)
 			}
 		}
@@ -90,23 +85,23 @@ func (i *LogItem) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (msg *LogItem) HasImageRef() bool {
-	return msg.Metadata != nil && len(msg.Metadata.ImageRef) > 0
+func (item *LogItem) HasImageRef() bool {
+	return item.Metadata != nil && len(item.Metadata.ImageRef) > 0
 }
 
-func (msg *LogItem) IsFromUser() bool {
-	return msg.Role == param.RoleUser
+func (item *LogItem) IsFromUser() bool {
+	return item.Role == param.RoleUser
 }
 
-func (msg *LogItem) IsFromAssistant() bool {
-	return msg.Role == param.RoleAssistant
+func (item *LogItem) IsFromAssistant() bool {
+	return item.Role == param.RoleAssistant
 }
 
-func (msg *LogItem) IsFromTool() bool {
-	return msg.Role == param.RoleTool
+func (item *LogItem) IsFromTool() bool {
+	return item.Role == param.RoleTool
 }
 
-func (msg *LogItem) Json() string {
-	c, _ := json.Marshal(msg)
+func (item *LogItem) Json() string {
+	c, _ := json.Marshal(item)
 	return string(c)
 }

@@ -434,7 +434,7 @@ func (a *LarkAdapter) parseMessageByType(ctx context.Context, messageId, msgType
 
 	switch msgType {
 	case imv1.MsgTypeText:
-		content, err = a.handleTextMessage(rawContent)
+		content,_, err = a.handleTextMessage(rawContent)
 	case imv1.MsgTypePost:
 		content, attachments, err = a.handlePostMessage(ctx, rawContent, messageId)
 	case imv1.MsgTypeImage:

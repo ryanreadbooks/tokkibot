@@ -36,28 +36,43 @@ func initGateway(ctx context.Context) error {
 	}
 
 	// auto-create adapters based on agent bindings in config
+	// Reuse adapters for the same channel+account to avoid duplicate connections
 	cfg := config.GetConfig()
+	adapterCache := make(map[string]chadapter.Adapter) // key: "channel:account"
+
 	for _, agentEntry := range cfg.Agents {
 		if agentEntry.Binding == nil {
 			continue
 		}
 
 		match := agentEntry.Binding.Match
-		adapter, err := createAdapter(match.Channel, match.Account)
-		if err != nil {
-			slog.Warn("failed to create adapter for agent binding",
+		adapterKey := fmt.Sprintf("%s:%s", match.Channel, match.Account)
+
+		adapter, exists := adapterCache[adapterKey]
+		if !exists {
+			var err error
+			adapter, err = createAdapter(match.Channel, match.Account)
+			if err != nil {
+				slog.Warn("failed to create adapter for agent binding",
+					slog.String("agent", agentEntry.Name),
+					slog.String("channel", match.Channel),
+					slog.String("account", match.Account),
+					slog.Any("error", err))
+				continue
+			}
+			adapterCache[adapterKey] = adapter
+			slog.Info("adapter created from binding",
 				slog.String("agent", agentEntry.Name),
 				slog.String("channel", match.Channel),
-				slog.String("account", match.Account),
-				slog.Any("error", err))
-			continue
+				slog.String("account", match.Account))
+		} else {
+			slog.Info("adapter reused from binding",
+				slog.String("agent", agentEntry.Name),
+				slog.String("channel", match.Channel),
+				slog.String("account", match.Account))
 		}
 
-		g.AddAdapter(adapter, agentEntry.Name)
-		slog.Info("adapter created from binding",
-			slog.String("agent", agentEntry.Name),
-			slog.String("channel", match.Channel),
-			slog.String("account", match.Account))
+		g.AddAdapterWithRouting(adapter, agentEntry.Name, match.ChatIds)
 	}
 
 	return g.Run(ctx)

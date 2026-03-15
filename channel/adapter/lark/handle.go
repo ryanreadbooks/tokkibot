@@ -20,19 +20,20 @@ type TextMessageContent struct {
 	Text string `json:"text"`
 }
 
-func (a *LarkAdapter) handleTextMessage(content string) (string, error) {
+func (a *LarkAdapter) handleTextMessage(content string) (string, []string, error) {
 	var text TextMessageContent
 
 	err := json.Unmarshal(xstring.ToBytes(content), &text)
 	if err != nil {
-		return "", err
+		return "", nil , err
 	}
 
-	// if at someone, strip, format: @_user_X, X is the order of mentioned user
-	// strip using regexp
+	// extract mentioned users before stripping, format: @_user_X, X is the order of mentioned user
+	mentionedUsers := mentionStripRegexp.FindAllString(text.Text, -1)
+	// strip @_user_X from text
 	text.Text = mentionStripRegexp.ReplaceAllString(text.Text, "")
 
-	return text.Text, nil
+	return text.Text, mentionedUsers, nil
 }
 
 // PostMessageContent represents the structure of a post message

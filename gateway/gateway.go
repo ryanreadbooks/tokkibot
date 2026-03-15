@@ -61,16 +61,43 @@ func WithEnableCwdAccess(enable bool) GatewayOption {
 	}
 }
 
-type Gateway struct {
-	agents   map[string]*agent.Agent
-	wg       sync.WaitGroup
-	adapters map[chmodel.Type]chadapter.Adapter
-	// adapter -> agentName mapping
-	adapterAgent map[chmodel.Type]string
-	poolMu       sync.Mutex
-	pools        map[string]*ants.Pool
+// routeRule defines how to route messages to an agent
+type routeRule struct {
+	agentName string
+	chatIds   map[string]struct{} // empty means match all (fallback)
+}
 
-	// running tasks cancel functions, key: "channel:chatId"
+// adapterRouter manages routing for a single adapter
+type adapterRouter struct {
+	adapter chadapter.Adapter
+	rules   []*routeRule
+}
+
+// matchAgent returns the agent name for a given chatId
+func (r *adapterRouter) matchAgent(chatId string) string {
+	var fallback string
+	for _, rule := range r.rules {
+		if len(rule.chatIds) == 0 {
+			fallback = rule.agentName
+			continue
+		}
+		if _, ok := rule.chatIds[chatId]; ok {
+			return rule.agentName
+		}
+	}
+	return fallback
+}
+
+type Gateway struct {
+	agents  map[string]*agent.Agent
+	wg      sync.WaitGroup
+	routers []*adapterRouter
+	// channel type → adapter (for cron delivery); keeps last-registered per type
+	channelAdapters map[chmodel.Type]chadapter.Adapter
+	poolMu          sync.Mutex
+	pools           map[string]*ants.Pool
+
+	// running tasks cancel functions, key: "agentName:channel:chatId"
 	runningMu sync.RWMutex
 	running   map[string]context.CancelFunc
 
@@ -125,14 +152,13 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	agents[config.CronsAgentName] = cronsAg
 
 	gateway := &Gateway{
-		agents:       agents,
-		pools:        make(map[string]*ants.Pool),
-		adapters:     make(map[chmodel.Type]chadapter.Adapter),
-		adapterAgent: make(map[chmodel.Type]string),
-		running:      make(map[string]context.CancelFunc),
-		cronMgr:      cron.GetGlobalManager(),
-		verbose:      option.verbose,
-		option:       option,
+		agents:          agents,
+		pools:           make(map[string]*ants.Pool),
+		channelAdapters: make(map[chmodel.Type]chadapter.Adapter),
+		running:         make(map[string]context.CancelFunc),
+		cronMgr:         cron.GetGlobalManager(),
+		verbose:         option.verbose,
+		option:          option,
 	}
 
 	gateway.cronMgr.SetHandler(gateway.handleCronTask)
@@ -153,24 +179,55 @@ func (g *Gateway) GetAgent(name ...string) *agent.Agent {
 	return g.agents[agentName]
 }
 
-// agentForAdapter returns the agent bound to the given adapter channel type.
-func (g *Gateway) agentForAdapter(channel chmodel.Type) *agent.Agent {
-	agentName, ok := g.adapterAgent[channel]
-	if !ok {
-		agentName = config.MainAgentName
+func (g *Gateway) agentByName(name string) *agent.Agent {
+	if ag, ok := g.agents[name]; ok {
+		return ag
 	}
-	return g.agents[agentName]
+	return g.agents[config.MainAgentName]
 }
 
 // AddAdapter registers an adapter with an optional agent name binding.
-// If agentName is empty, defaults to "main".
+// This is a simplified API; all messages go to the specified agent.
 func (g *Gateway) AddAdapter(adapter chadapter.Adapter, agentName ...string) {
-	g.adapters[adapter.Type()] = adapter
 	name := config.MainAgentName
 	if len(agentName) > 0 && agentName[0] != "" {
 		name = agentName[0]
 	}
-	g.adapterAgent[adapter.Type()] = name
+	g.AddAdapterWithRouting(adapter, name, nil)
+}
+
+// AddAdapterWithRouting registers an adapter with routing rules.
+// If chatIds is nil/empty, all messages go to the specified agent.
+// Multiple calls with the same adapter will add additional routing rules.
+func (g *Gateway) AddAdapterWithRouting(adapter chadapter.Adapter, agentName string, chatIds []string) {
+	// Find existing router for this adapter
+	var router *adapterRouter
+	for _, r := range g.routers {
+		if r.adapter == adapter {
+			router = r
+			break
+		}
+	}
+
+	// Create new router if not found
+	if router == nil {
+		router = &adapterRouter{adapter: adapter}
+		g.routers = append(g.routers, router)
+	}
+
+	// Build chatId set
+	chatIdSet := make(map[string]struct{})
+	for _, id := range chatIds {
+		chatIdSet[id] = struct{}{}
+	}
+
+	// Add routing rule
+	router.rules = append(router.rules, &routeRule{
+		agentName: agentName,
+		chatIds:   chatIdSet,
+	})
+
+	g.channelAdapters[adapter.Type()] = adapter
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
@@ -181,15 +238,19 @@ func (g *Gateway) Run(ctx context.Context) error {
 		defer g.cronMgr.Stop()
 	}
 
-	for _, adapter := range g.adapters {
+	for _, router := range g.routers {
 		if g.verbose {
-			slog.Info(fmt.Sprintf("channel %s begin to run...", adapter.Type()))
+			var agentNames []string
+			for _, r := range router.rules {
+				agentNames = append(agentNames, r.agentName)
+			}
+			slog.Info(fmt.Sprintf("channel %s (agents: %v) begin to run...", router.adapter.Type(), agentNames))
 		}
 		g.wg.Go(func() {
-			adapter.Start(ctx)
+			router.adapter.Start(ctx)
 		})
 		g.wg.Go(func() {
-			g.messageWorker(ctx, adapter)
+			g.messageWorker(ctx, router)
 		})
 	}
 
@@ -198,17 +259,28 @@ func (g *Gateway) Run(ctx context.Context) error {
 	return nil
 }
 
-func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) {
+func (g *Gateway) messageWorker(ctx context.Context, router *adapterRouter) {
+	adapter := router.adapter
+
 	for {
 		select {
 		case <-ctx.Done():
 			if g.verbose {
-				slog.InfoContext(ctx, "message worker stopped", slog.String("adapter", adapter.Type().String()), slog.Any("reason", ctx.Err()))
+				slog.InfoContext(ctx, "message worker stopped",
+					slog.String("adapter", adapter.Type().String()),
+					slog.Any("reason", ctx.Err()))
 			}
 			return
 		case rawMsg := <-adapter.ReceiveChan():
-			// Create trace info and inject into context
-			// MessageId may be stored in metadata if available
+			// Route message to the appropriate agent
+			agentName := router.matchAgent(rawMsg.ChatId)
+			if agentName == "" {
+				slog.WarnContext(ctx, "no agent matched for message, skipping",
+					slog.String("channel", rawMsg.Channel.String()),
+					slog.String("chat_id", rawMsg.ChatId))
+				continue
+			}
+
 			messageId := ""
 			if mid, ok := rawMsg.Metadata["message_id"].(string); ok {
 				messageId = mid
@@ -223,23 +295,19 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 			if g.verbose {
 				slog.InfoContext(taskCtx, "received message",
 					slog.String("sender_id", rawMsg.SenderId),
+					slog.String("agent", agentName),
 					slog.Int("content_len", len(rawMsg.Content)),
 					slog.Int("attachments", len(rawMsg.Attachments)))
 			}
 
-			// check for control commands first
-			if cmd := parseControlCommand(rawMsg.Content); g.handleControl(rawMsg, cmd) {
+			if cmd := parseControlCommand(rawMsg.Content); g.handleControl(rawMsg, cmd, agentName) {
 				continue
 			}
 
-			g.poolMu.Lock()
-			poolKey := fmt.Sprintf("%s:%s", rawMsg.Channel, rawMsg.ChatId)
-			pool, ok := g.pools[poolKey]
-			if !ok {
-				pool, _ = ants.NewPool(1) // IMPORTANT: make sure one channel one chat is handled by one goroutine
-				g.pools[poolKey] = pool
-			}
-			g.poolMu.Unlock()
+			// Pool per agent:channel:chatId (size=1): serializes messages within
+			// the same chat, while different chats and agents run in parallel.
+			sessionKey := fmt.Sprintf("%s:%s", agentName, rawMsg.Key())
+			chatPool := g.getOrCreatePool(sessionKey)
 
 			attachments := extractAttachments(rawMsg)
 			userMessage := &agent.UserMessage{
@@ -250,30 +318,40 @@ func (g *Gateway) messageWorker(ctx context.Context, adapter chadapter.Adapter) 
 				Attachments: attachments,
 			}
 
-			// create cancellable context for this task (with trace info)
 			taskCtx, taskCancel := context.WithCancel(taskCtx)
+			runningKey := sessionKey
 
-			// store cancel function for /stop command
 			g.runningMu.Lock()
-			g.running[poolKey] = taskCancel
+			g.running[runningKey] = taskCancel
 			g.runningMu.Unlock()
 
-			pool.Submit(func() {
+			go chatPool.Submit(func() {
 				defer func() {
-					// cleanup cancel function when task completes
 					g.runningMu.Lock()
-					delete(g.running, poolKey)
+					delete(g.running, runningKey)
 					g.runningMu.Unlock()
 				}()
 
 				if rawMsg.Stream {
-					g.workerDoStream(taskCtx, rawMsg, userMessage, adapter)
+					g.workerDoStream(taskCtx, rawMsg, userMessage, adapter, agentName)
 				} else {
-					g.workerDo(taskCtx, rawMsg, userMessage, adapter)
+					g.workerDo(taskCtx, rawMsg, userMessage, adapter, agentName)
 				}
 			})
 		}
 	}
+}
+
+func (g *Gateway) getOrCreatePool(name string) *ants.Pool {
+	g.poolMu.Lock()
+	defer g.poolMu.Unlock()
+
+	pool, ok := g.pools[name]
+	if !ok {
+		pool, _ = ants.NewPool(1)
+		g.pools[name] = pool
+	}
+	return pool
 }
 
 func (g *Gateway) workerDo(
@@ -281,11 +359,12 @@ func (g *Gateway) workerDo(
 	rawMsg *chmodel.IncomingMessage,
 	userMessage *agent.UserMessage,
 	adapter chadapter.Adapter,
+	agentName string,
 ) {
 	confirmHandler := NewConfirmHandler(rawMsg)
 	ctx = tool.WithConfirmer(ctx, confirmHandler)
 
-	ag := g.agentForAdapter(adapter.Type())
+	ag := g.agentByName(agentName)
 	askOpts := []agent.AskOption{}
 	if g.option.enableAutoMessageDelivery {
 		askOpts = append(askOpts, agent.WithMessageChannel(&agent.AskTemporaryMessageChannel{
@@ -312,11 +391,12 @@ func (g *Gateway) workerDoStream(
 	rawMsg *chmodel.IncomingMessage,
 	userMessage *agent.UserMessage,
 	adapter chadapter.Adapter,
+	agentName string,
 ) {
 	confirmHandler := NewConfirmHandler(rawMsg)
 	ctx = tool.WithConfirmer(ctx, confirmHandler)
 
-	ag := g.agentForAdapter(adapter.Type())
+	ag := g.agentByName(agentName)
 	emitter := &msgEmitter{msg: rawMsg}
 	askOpts := []agent.AskOption{}
 	if g.option.enableAutoMessageDelivery {
@@ -378,7 +458,7 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 		return
 	}
 
-	adapter, ok := g.adapters[task.DeliverChannel]
+	adapter, ok := g.channelAdapters[task.DeliverChannel]
 	if !ok {
 		slog.ErrorContext(ctx, "adapter not found for cron task delivery",
 			slog.String("name", task.Name),
