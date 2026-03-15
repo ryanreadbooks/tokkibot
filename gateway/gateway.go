@@ -24,6 +24,7 @@ type gatewayOption struct {
 	agentNames   []string // agent names to initialize
 
 	enableAutoMessageDelivery bool
+	enableCwdAccess           bool
 }
 
 type GatewayOption func(*gatewayOption)
@@ -54,6 +55,12 @@ func WithDisableAutoMessageDelivery() GatewayOption {
 	}
 }
 
+func WithEnableCwdAccess(enable bool) GatewayOption {
+	return func(o *gatewayOption) {
+		o.enableCwdAccess = enable
+	}
+}
+
 type Gateway struct {
 	agents   map[string]*agent.Agent
 	wg       sync.WaitGroup
@@ -77,6 +84,7 @@ type Gateway struct {
 func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	option := &gatewayOption{
 		enableAutoMessageDelivery: true,
+		enableCwdAccess:           false,
 	}
 	for _, opt := range opts {
 		opt(option)

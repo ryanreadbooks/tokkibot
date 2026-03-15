@@ -19,8 +19,9 @@ type Config struct {
 
 	ResumeSessionId string
 
-	WorkspaceDir string // workspace directory
-	SessionDir   string // where session and context logs are stored
+	WorkspaceDir    string // workspace directory
+	SessionDir      string // where session and context logs are stored
+	EnableCwdAccess bool
 
 	isSpawned              bool
 	doNotAutoRegisterTools bool

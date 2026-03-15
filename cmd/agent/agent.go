@@ -81,7 +81,9 @@ func runAgentOnce(ctx context.Context, message string) error {
 
 	gw, err := gateway.NewGateway(ctx,
 		gateway.WithAgentNames([]string{agentName}),
-		gateway.WithDisableAutoMessageDelivery())
+		gateway.WithDisableAutoMessageDelivery(),
+		gateway.WithEnableCwdAccess(true),
+	)
 	if err != nil {
 		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))
 		return fmt.Errorf("failed to create gateway: %w", err)
@@ -112,6 +114,7 @@ func runAgent(ctx context.Context) error {
 	gw, err := gateway.NewGateway(ctx,
 		gateway.WithAgentNames([]string{agentName}),
 		gateway.WithDisableAutoMessageDelivery(),
+		gateway.WithEnableCwdAccess(true),
 	)
 	if err != nil {
 		slog.Error("[cmd/agent] failed to create gateway", slog.Any("error", err))

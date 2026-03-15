@@ -160,11 +160,18 @@ func (a *Agent) registerMainTools(agentWorkspace string) {
 func (a *Agent) registerBasicTools(agentWorkspace string) {
 	workspaceReadDir := workspace.GetAllowedReadPaths(agentWorkspace)
 	workspaceWriteDir := workspace.GetAllowedWritePaths(agentWorkspace)
+	readableDirs := workspaceReadDir
+	writeableDirs := workspaceWriteDir
+	if a.cfg.EnableCwdAccess {
+		readableDirs = append(readableDirs, config.GetProjectDir())
+		writeableDirs = append(writeableDirs, config.GetProjectDir())
+	}
 
-	a.RegisterTool(tools.ReadFile(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
-	a.RegisterTool(tools.WriteFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
-	a.RegisterTool(tools.ListDir(append([]string{config.GetProjectDir()}, workspaceReadDir...)))
-	a.RegisterTool(tools.EditFile(append([]string{config.GetProjectDir()}, workspaceWriteDir...)))
+	a.RegisterTool(tools.ReadFile(readableDirs))
+	a.RegisterTool(tools.WriteFile(writeableDirs))
+	a.RegisterTool(tools.ListDir(readableDirs))
+	a.RegisterTool(tools.EditFile(writeableDirs))
+
 	a.RegisterTool(tools.LoadRef())
 	a.RegisterTool(tools.Shell())
 	a.RegisterTool(tools.UseSkill(a.skillLoader))
@@ -203,7 +210,7 @@ func (a *Agent) providerConfig() config.ProviderConfig {
 
 type (
 	AskTemporaryMessageChannel struct {
-		OutChan      chan<- *chmodel.OutgoingMessage
+		OutChan  chan<- *chmodel.OutgoingMessage
 		Metadata map[string]any
 	}
 	askOptionImpl struct {
