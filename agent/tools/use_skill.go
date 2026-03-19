@@ -6,9 +6,14 @@ import (
 	"strings"
 
 	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
+	"github.com/ryanreadbooks/tokkibot/component/sandbox"
 	"github.com/ryanreadbooks/tokkibot/component/skill"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 )
+
+// SkillSandboxFactory creates a sandbox for a specific skill,
+// with the skill's directory mounted read-write.
+type SkillSandboxFactory func(skillDir string) sandbox.Sandbox
 
 type UseSkillAction string
 
@@ -38,7 +43,7 @@ type UseSkillInput struct {
 }
 
 // Skill-using tool.
-func UseSkill(loader *skill.Loader) tool.Invoker {
+func UseSkill(loader *skill.Loader, sbFactory SkillSandboxFactory) tool.Invoker {
 	return tool.NewInvoker(tool.Info{
 		Name:        ToolNameUseSkill,
 		Description: description.UseSkillDescription,
@@ -68,19 +73,18 @@ func UseSkill(loader *skill.Loader) tool.Invoker {
 
 			return refManual.String(), nil
 		case UseSkillActionScript:
-			return safeExecuteSkillScript(s, input.Args)
+			return safeExecuteSkillScript(s, sbFactory, input.Args)
 		}
 
 		return "", fmt.Errorf("invalid skill action: %s", input.Action)
 	})
 }
 
-func safeExecuteSkillScript(s *skill.Skill, command string) (string, error) {
-	// command can only be executed in the skill's directory
+func safeExecuteSkillScript(s *skill.Skill, sbFactory SkillSandboxFactory, command string) (string, error) {
 	if checkCommandBlocked(command) {
 		return "", fmt.Errorf("command blocked: matches dangerous pattern")
 	}
-	// TODO light-weight sandbox is required
 
-	return s.ExecuteScript(command)
+	sb := sbFactory(s.Location())
+	return s.ExecuteScript(sb, command)
 }

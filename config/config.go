@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 )
 
 var conf Config
@@ -45,12 +46,37 @@ type AgentBinding struct {
 	Match AgentBindingMatch `json:"match"`
 }
 
+type SandboxConfig struct {
+	Enabled        bool     `json:"enabled"`
+	ReadOnlyPaths  []string `json:"readOnlyPaths,omitempty"`
+	ReadWritePaths []string `json:"readWritePaths,omitempty"`
+}
+
+func (c *SandboxConfig) IsEnabled() bool {
+	return c != nil && c.Enabled && runtime.GOOS == "linux"
+}
+
+func (c *SandboxConfig) GetReadOnlyPaths() []string {
+	if c == nil {
+		return nil
+	}
+	return c.ReadOnlyPaths
+}
+
+func (c *SandboxConfig) GetReadWritePaths() []string {
+	if c == nil {
+		return nil
+	}
+	return c.ReadWritePaths
+}
+
 type AgentEntry struct {
-	Name         string        `json:"name"`
-	MaxIteration int           `json:"maxIteration"`
-	Provider     string        `json:"provider"`
-	Model        string        `json:"model,omitempty"`
-	Binding      *AgentBinding `json:"binding,omitempty"`
+	Name         string         `json:"name"`
+	MaxIteration int            `json:"maxIteration"`
+	Provider     string         `json:"provider"`
+	Model        string         `json:"model,omitempty"`
+	Binding      *AgentBinding  `json:"binding,omitempty"`
+	Sandbox      *SandboxConfig `json:"sandbox,omitempty"`
 }
 
 type ChannelEntry struct {

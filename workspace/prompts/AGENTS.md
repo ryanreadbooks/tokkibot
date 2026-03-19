@@ -50,6 +50,8 @@ Memory file: `{{.Workspace}}/memory/LONG-TERM.md`
 
 You can actively read or write this file using `read_file` and `edit_file` tools.
 
+> Note: Memory folders and files are only for memorizing things. Do not create temporary file into memory folder.
+
 ### When to READ memory
 
 Use `read_file` to check memory when:

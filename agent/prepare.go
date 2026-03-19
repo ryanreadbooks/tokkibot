@@ -18,6 +18,12 @@ func WithWorkspace(workspace string) PrepareOption {
 	}
 }
 
+func WithEnableCwdAccess(enable bool) PrepareOption {
+	return func(c *Config) {
+		c.EnableCwdAccess = enable
+	}
+}
+
 // WithSessionDir sets a custom session dir (e.g. __cron uses global sessions dir)
 func WithSessionDir(sessionDir string) PrepareOption {
 	return func(c *Config) {
@@ -64,6 +70,7 @@ func Prepare(ctx context.Context, agentName string, opts ...PrepareOption) (ag *
 		Provider:     providerName,
 		Model:        model,
 		MaxIteration: entry.MaxIteration,
+		Sandbox:      entry.Sandbox,
 	}
 	for _, opt := range opts {
 		opt(&agCfg)

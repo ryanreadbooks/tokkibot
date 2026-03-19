@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
 	"github.com/ryanreadbooks/tokkibot/agent/tools/guard"
+	"github.com/ryanreadbooks/tokkibot/component/sandbox"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/pkg/bash"
 	pkgos "github.com/ryanreadbooks/tokkibot/pkg/os"
@@ -28,6 +27,7 @@ type shellResultTag string
 const (
 	shellBlockedTag       shellResultTag = "<shell_blocked>"
 	shellRunErrTag        shellResultTag = "<shell_run_error>"
+	shellSandboxErrTag    shellResultTag = "<shell_sandbox_error>"
 	shellConfirmNeededTag shellResultTag = "<shell_confirm_needed>"
 )
 
@@ -74,18 +74,6 @@ func checkCommandBlocked(command string) bool {
 
 func (e *ConfirmationRequiredError) Error() string {
 	return fmt.Sprintf("Command '%s' requires user confirmation. Please confirm to proceed.", e.Command)
-}
-
-// getSystemShell returns the shell executable and arguments for the current OS.
-// Returns (shell, flag) where the command should be executed as: shell flag "command"
-func getSystemShell() (shell string, flag string) {
-	switch runtime.GOOS {
-	case "windows":
-		return "cmd", "/C"
-	default:
-		// Linux, macOS, and other Unix-like systems
-		return "sh", "-c"
-	}
 }
 
 // isCurlCommand checks if the command starts with curl
@@ -139,51 +127,54 @@ func filterHTMLContent(content string) string {
 	return strings.TrimSpace(result)
 }
 
-func doShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
-	if strings.TrimSpace(input.Command) == "" {
-		return "", wrapShellError(errors.New("empty command"), shellRunErrTag)
+func doShellInvoke(sb sandbox.Sandbox) func(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
+	return func(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) (string, error) {
+		if strings.TrimSpace(input.Command) == "" {
+			return "", wrapShellError(errors.New("empty command"), shellRunErrTag)
+		}
+
+		if tmpCmd, _ := bash.ParseCommand(input.Command); tmpCmd == "" {
+			return "", wrapShellError(errors.New("invalid command"), shellRunErrTag)
+		}
+
+		command := input.Command
+		if input.WorkingDir != "" {
+			cleanWd, _ := guard.ResolvePath(input.WorkingDir, []string{})
+			command = fmt.Sprintf("cd '%s' && %s", cleanWd, command)
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
+		defer cancel()
+
+		startTime := time.Now()
+		outputStr, err := sb.Execute(ctx, command)
+		duration := time.Since(startTime).Milliseconds()
+
+		if err != nil {
+			slog.WarnContext(ctx, "[tool/shell] command failed",
+				slog.String("command", input.Command),
+				slog.Int64("duration_ms", duration),
+				slog.Any("error", err))
+			if sandbox.IsSandboxError(err) {
+				return "", wrapShellError(err, shellSandboxErrTag)
+			}
+			if ce, ok := err.(*sandbox.CommandError); ok {
+				return ce.Output, wrapShellError(err, shellRunErrTag)
+			}
+			return "", wrapShellError(err, shellRunErrTag)
+		}
+
+		if isCurlCommand(input.Command) && isHTMLContent(outputStr) {
+			outputStr = filterHTMLContent(outputStr)
+		}
+
+		if len(outputStr) > maxAllowedShellOutputLen {
+			more := len(outputStr) - maxAllowedShellOutputLen
+			outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
+		}
+
+		return outputStr, nil
 	}
-
-	if tmpCmd, _ := bash.ParseCommand(input.Command); tmpCmd == "" {
-		return "", wrapShellError(errors.New("invalid command"), shellRunErrTag)
-	}
-
-	shell, flag := getSystemShell()
-	ctx, cancel := context.WithTimeout(ctx, shellExecTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, shell, flag, input.Command)
-	if input.WorkingDir != "" {
-		cleanWd, _ := guard.ResolvePath(input.WorkingDir, []string{})
-		cmd.Dir = cleanWd
-	}
-
-	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
-	duration := time.Since(startTime).Milliseconds()
-
-	if err != nil {
-		slog.WarnContext(ctx, "[tool/shell] command failed",
-			slog.String("command", input.Command),
-			slog.Int64("duration_ms", duration),
-			slog.Any("error", err))
-		return "", wrapShellError(fmt.Errorf("%w: %s", err, string(output)), shellRunErrTag)
-	}
-
-	outputStr := string(output)
-
-	// Filter HTML content if this is a curl command returning HTML the content will be extremely large
-	if isCurlCommand(input.Command) && isHTMLContent(outputStr) {
-		outputStr = filterHTMLContent(outputStr)
-	}
-
-	// truncate output
-	if len(outputStr) > maxAllowedShellOutputLen {
-		more := len(outputStr) - maxAllowedShellOutputLen
-		outputStr = outputStr[:maxAllowedShellOutputLen] + fmt.Sprintf("\n... (truncated, %d more chars)", more)
-	}
-
-	return outputStr, nil
 }
 
 func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *ShellInput) error {
@@ -232,11 +223,12 @@ func beforeDoShellInvoke(ctx context.Context, meta tool.InvokeMeta, input *Shell
 }
 
 // Tool to execute a command under the optional given working directory.
-func Shell() tool.Invoker {
+// All commands are executed inside the given sandbox for isolation.
+func Shell(sb sandbox.Sandbox) tool.Invoker {
 	info := tool.Info{
 		Name:        ToolNameShell,
 		Description: fmt.Sprintf(description.ShellDescription, pkgos.GetSystemDistro()),
 	}
 
-	return tool.NewInvoker(info, doShellInvoke, tool.WithBeforeInvoke(beforeDoShellInvoke))
+	return tool.NewInvoker(info, doShellInvoke(sb), tool.WithBeforeInvoke(beforeDoShellInvoke))
 }

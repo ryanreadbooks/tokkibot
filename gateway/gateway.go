@@ -108,11 +108,15 @@ type Gateway struct {
 	option  *gatewayOption
 }
 
-func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
-	option := &gatewayOption{
+func defaultGatewayOption() *gatewayOption {
+	return &gatewayOption{
 		enableAutoMessageDelivery: true,
 		enableCwdAccess:           false,
 	}
+}
+
+func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
+	option := defaultGatewayOption()
 	for _, opt := range opts {
 		opt(option)
 	}
@@ -129,7 +133,9 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 
 	agents := make(map[string]*agent.Agent, len(option.agentNames))
 	for _, name := range option.agentNames {
-		ag, err := agent.Prepare(ctx, name)
+		ag, err := agent.Prepare(ctx, name,
+			agent.WithEnableCwdAccess(option.enableCwdAccess),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to prepare agent %s: %w", name, err)
 		}
@@ -143,6 +149,7 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	cronsAg, err := agent.Prepare(ctx, config.CronsAgentName,
 		agent.WithWorkspace(config.GetAgentWorkspaceDir(config.MainAgentName)),
 		agent.WithSessionDir(config.GetCronSessionsDir()),
+		agent.WithEnableCwdAccess(option.enableCwdAccess),
 	)
 	cronsAg.UnRegisterTool(tools.ToolNameSendMessage)
 

@@ -3,31 +3,23 @@ package skill
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"time"
 
-	"github.com/ryanreadbooks/tokkibot/pkg/bash"
+	"github.com/ryanreadbooks/tokkibot/component/sandbox"
 )
 
 type Script struct {
-	// working directory of the script
-	Path string
+	sb sandbox.Sandbox
 }
 
 func (s *Script) Execute(command string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
 	defer cancel()
 
-	instruct, args := bash.ParseCommand(command)
-	cmd := exec.CommandContext(ctx, instruct, args...)
-	cmd.Dir = s.Path
-
-	output, err := cmd.CombinedOutput()
+	outputStr, err := s.sb.Execute(ctx, command)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, string(output))
+		return "", fmt.Errorf("script execution failed: %w", err)
 	}
-
-	outputStr := string(output)
 
 	const maxAllowedScriptOutputLen = 15000
 	if len(outputStr) > maxAllowedScriptOutputLen {

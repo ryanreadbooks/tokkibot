@@ -1,6 +1,10 @@
 package agent
 
-import "context"
+import (
+	"context"
+
+	"github.com/ryanreadbooks/tokkibot/config"
+)
 
 type Config struct {
 	RootCtx context.Context
@@ -22,6 +26,8 @@ type Config struct {
 	WorkspaceDir    string // workspace directory
 	SessionDir      string // where session and context logs are stored
 	EnableCwdAccess bool
+
+	Sandbox *config.SandboxConfig
 
 	isSpawned              bool
 	doNotAutoRegisterTools bool

@@ -13,6 +13,7 @@ import (
 	agcontext "github.com/ryanreadbooks/tokkibot/agent/context"
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
+	"github.com/ryanreadbooks/tokkibot/component/sandbox"
 	componentskill "github.com/ryanreadbooks/tokkibot/component/skill"
 	componentool "github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
@@ -173,8 +174,42 @@ func (a *Agent) registerBasicTools(agentWorkspace string) {
 	a.RegisterTool(tools.EditFile(writeableDirs))
 
 	a.RegisterTool(tools.LoadRef())
-	a.RegisterTool(tools.Shell())
-	a.RegisterTool(tools.UseSkill(a.skillLoader))
+
+	sbCfg := a.cfg.Sandbox
+
+	var sb sandbox.Sandbox
+	if sbCfg.IsEnabled() {
+		sandboxOpts := []sandbox.Option{
+			sandbox.WithReadWritePaths(writeableDirs...),
+			sandbox.WithReadOnlyPaths(readableDirs...),
+			sandbox.WithReadOnlyPaths(sbCfg.GetReadOnlyPaths()...),
+			sandbox.WithReadWritePaths(sbCfg.GetReadWritePaths()...),
+		}
+		if a.cfg.EnableCwdAccess {
+			sandboxOpts = append(sandboxOpts, sandbox.WithWorkingDir(config.GetProjectDir()))
+		}
+		sb = sandbox.NewSandbox(sandboxOpts...)
+	} else {
+		workingDir := ""
+		if a.cfg.EnableCwdAccess {
+			workingDir = config.GetProjectDir()
+		}
+		sb = sandbox.NewPassthroughSandbox(workingDir)
+	}
+	a.RegisterTool(tools.Shell(sb))
+
+	skillSbFactory := func(skillDir string) sandbox.Sandbox {
+		if sbCfg.IsEnabled() {
+			return sandbox.NewSandbox(
+				sandbox.WithReadWritePaths(skillDir),
+				sandbox.WithWorkingDir(skillDir),
+				sandbox.WithReadOnlyPaths(sbCfg.GetReadOnlyPaths()...),
+				sandbox.WithReadWritePaths(sbCfg.GetReadWritePaths()...),
+			)
+		}
+		return sandbox.NewPassthroughSandbox(skillDir)
+	}
+	a.RegisterTool(tools.UseSkill(a.skillLoader, skillSbFactory))
 	a.RegisterTool(tools.WebFetch())
 	a.RegisterTool(tools.TodoWrite())
 }

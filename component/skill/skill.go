@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/ryanreadbooks/tokkibot/component/sandbox"
 )
 
 const (
@@ -123,9 +125,9 @@ func (s *Skill) LoadRefs(refName string) (*Refs, error) {
 }
 
 // command should be a valid shell command with arguments
-func (s *Skill) ExecuteScript(command string) (string, error) {
+func (s *Skill) ExecuteScript(sb sandbox.Sandbox, command string) (string, error) {
 	if s.Script == nil {
-		s.Script = &Script{Path: s.rawPath}
+		s.Script = &Script{sb: sb}
 	}
 
 	return s.Script.Execute(command)
