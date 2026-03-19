@@ -422,7 +422,7 @@ func (a *LarkAdapter) onMessageReceive(ctx context.Context, event *imv1.P2Messag
 }
 
 const (
-	streamFlushInterval  = 300 * time.Millisecond
+	streamFlushInterval  = 700 * time.Millisecond
 	streamFlushThreshold = 256 // flush when accumulated content exceeds this
 
 	metaKeyMessageId  = "message_id"

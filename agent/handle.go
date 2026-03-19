@@ -246,8 +246,8 @@ mainLoop:
 			for content := range streamPacked.Content {
 				emitter.EmitContent(&EmittedContent{
 					Round:            curIter,
-					Content:          content.Content,
-					ReasoningContent: content.ReasoningContent,
+					Content:          content.Content,          // streaming partial content
+					ReasoningContent: content.ReasoningContent, // streaming partial reasoning content
 					Metadata:         EmittedReasoningContentMetadata{ThinkingEnabled: thinkingEnabled},
 				})
 				contentBuilder.WriteString(content.Content)
@@ -300,17 +300,23 @@ mainLoop:
 			assistantTcs = append(assistantTcs, tcr.tc)
 		}
 
+		reasoningContent := reasoningContentBuilder.String()
 		err = a.contextManager.AppendAssistantMessage(userMsg, &schema.CompletionMessage{
 			Content:   contentBuilder.String(),
 			ToolCalls: assistantTcs,
 			ReasoningContent: &schema.ReasoningContent{
-				Content:   reasoningContentBuilder.String(),
+				Content:   reasoningContent,
 				Signature: reasoningSignature,
 			},
 		})
 		if err != nil {
 			emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 			break
+		}
+
+		if reasoningContent != "" {
+			// we send a \n to break lines for better UI display
+			emitter.EmitContent(&EmittedContent{Round: curIter, Content: "\n"})
 		}
 
 		if len(dstTcs) == 0 {
