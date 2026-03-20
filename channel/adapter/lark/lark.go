@@ -186,7 +186,11 @@ func (a *LarkAdapter) doReplyAttachments(ctx context.Context, messageId string, 
 		case model.AttachmentImage:
 			a.replyImage(ctx, messageId, attachment.Data)
 		case model.AttachmentAudio:
-			a.replyAudio(ctx, messageId, attachment.Filename, attachment.Data)
+			duration := 0
+			if attachment.Extra != nil && attachment.Extra.Audio != nil {
+				duration = int(attachment.Extra.Audio.AudioDuration)
+			}
+			a.replyAudio(ctx, messageId, attachment.Filename, attachment.Data, duration)
 		case model.AttachmentVideo:
 			a.replyMedia(ctx, messageId, attachment.Filename, attachment.Data)
 		case model.AttachmentFile:
@@ -201,7 +205,11 @@ func (a *LarkAdapter) doSendAttachments(ctx context.Context, target messageTarge
 		case model.AttachmentImage:
 			a.sendImage(ctx, target, attachment.Data)
 		case model.AttachmentAudio:
-			a.sendAudio(ctx, target, attachment.Filename, attachment.Data)
+			duration := 0
+			if attachment.Extra != nil && attachment.Extra.Audio != nil {
+				duration = int(attachment.Extra.Audio.AudioDuration)
+			}
+			a.sendAudio(ctx, target, attachment.Filename, attachment.Data, duration)
 		case model.AttachmentVideo:
 			a.sendMedia(ctx, target, attachment.Filename, attachment.Data)
 		case model.AttachmentFile:

@@ -13,10 +13,12 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
+
 	"github.com/ryanreadbooks/tokkibot/agent/tools"
 	chmodel "github.com/ryanreadbooks/tokkibot/channel/model"
 	component "github.com/ryanreadbooks/tokkibot/component/tool"
 	"github.com/ryanreadbooks/tokkibot/config"
+	"github.com/ryanreadbooks/tokkibot/pkg/audio"
 	"github.com/ryanreadbooks/tokkibot/pkg/safe"
 )
 
@@ -299,6 +301,13 @@ func (d *messageToolDelegate) Send(
 						attachment.Type = chmodel.AttachmentVideo
 					} else if strings.Contains(mime, "audio/") {
 						attachment.Type = chmodel.AttachmentAudio
+						if dur := audio.DetectDurationMs(data, mime); dur > 0 {
+							attachment.Extra = &chmodel.OutgoingMessageAttachmentExtra{
+								Audio: &chmodel.OutgoingMessageAudioAttachment{
+									AudioDuration: dur,
+								},
+							}
+						}
 					} else {
 						attachment.Type = chmodel.AttachmentFile
 					}

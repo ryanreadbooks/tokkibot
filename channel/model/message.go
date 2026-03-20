@@ -142,6 +142,15 @@ type OutgoingMessageAttachment struct {
 	Type     AttachmentType
 	Data     []byte
 	Filename string
+	Extra    *OutgoingMessageAttachmentExtra
+}
+
+type OutgoingMessageAttachmentExtra struct {
+	Audio *OutgoingMessageAudioAttachment
+}
+
+type OutgoingMessageAudioAttachment struct {
+	AudioDuration int64
 }
 
 type OutgoingMessage struct {

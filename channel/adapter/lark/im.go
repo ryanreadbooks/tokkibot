@@ -81,8 +81,10 @@ func (a *LarkAdapter) sendImage(ctx context.Context, target messageTarget, image
 	a.sendMessage(ctx, target.idType, target.id, imv1.MsgTypeImage, `{"image_key":"`+imgKey+`"}`)
 }
 
-func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filename string, audio []byte) {
-	audioKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeOpus, filename, audio)
+func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filename string, audio []byte, audioDuration int) {
+	audioKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeOpus, filename, audio, &messageResourceFileExtra{
+		audioDuration: audioDuration,
+	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to upload audio", "error", err)
 		return
@@ -92,7 +94,7 @@ func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filen
 }
 
 func (a *LarkAdapter) sendMedia(ctx context.Context, target messageTarget, filename string, media []byte) {
-	mediaKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media)
+	mediaKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media, nil)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to upload media", "error", err)
 		return
@@ -102,7 +104,7 @@ func (a *LarkAdapter) sendMedia(ctx context.Context, target messageTarget, filen
 }
 
 func (a *LarkAdapter) sendFile(ctx context.Context, target messageTarget, filename string, file []byte) {
-	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeStream, filename, file)
+	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeStream, filename, file, nil)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to upload file", "error", err)
 		return
@@ -247,8 +249,15 @@ func (a *LarkAdapter) replyImage(ctx context.Context, messageId string, image []
 	return a.replyMessage(ctx, messageId, imv1.MsgTypeImage, `{"image_key":"`+imgKey+`"}`)
 }
 
-func (a *LarkAdapter) replyAudio(ctx context.Context, messageId string, filename string, audio []byte) (string, error) {
-	audioKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeOpus, filename, audio)
+func (a *LarkAdapter) replyAudio(ctx context.Context, messageId string, filename string, audio []byte, audioDuration int) (string, error) {
+	audioKey, err := a.uploadMessageResourceFile(
+		ctx,
+		uploadFileTypeOpus,
+		filename,
+		audio,
+		&messageResourceFileExtra{
+			audioDuration: audioDuration,
+		})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload audio: %w", err)
 	}
@@ -257,7 +266,7 @@ func (a *LarkAdapter) replyAudio(ctx context.Context, messageId string, filename
 }
 
 func (a *LarkAdapter) replyMedia(ctx context.Context, messageId string, filename string, media []byte) (string, error) {
-	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media)
+	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
@@ -280,7 +289,7 @@ func (a *LarkAdapter) replyFile(ctx context.Context, messageId string, filename 
 		fileType = uploadFileTypeStream
 	}
 
-	fileKey, err := a.uploadMessageResourceFile(ctx, fileType, filename, file)
+	fileKey, err := a.uploadMessageResourceFile(ctx, fileType, filename, file, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to upload file: %w", err)
 	}
@@ -434,7 +443,7 @@ func (a *LarkAdapter) parseMessageByType(ctx context.Context, messageId, msgType
 
 	switch msgType {
 	case imv1.MsgTypeText:
-		content,_, err = a.handleTextMessage(rawContent)
+		content, _, err = a.handleTextMessage(rawContent)
 	case imv1.MsgTypePost:
 		content, attachments, err = a.handlePostMessage(ctx, rawContent, messageId)
 	case imv1.MsgTypeImage:

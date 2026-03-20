@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	imv1 "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/ryanreadbooks/tokkibot/pkg/audio"
 )
 
 func wrapResourceKey(key string) string {
@@ -83,18 +85,40 @@ const (
 	uploadFileTypeStream uploadFileType = "stream"
 )
 
+type messageResourceFileExtra struct {
+	audioDuration int
+}
+
 func (a *LarkAdapter) uploadMessageResourceFile(
 	ctx context.Context,
 	fileType uploadFileType,
 	fileName string,
 	data []byte,
+	extra *messageResourceFileExtra,
 ) (string, error) {
+	bodyBuilder := imv1.NewCreateFileReqBodyBuilder().
+		FileType(string(fileType)).
+		FileName(fileName).
+		File(bytes.NewReader(data))
+	if fileType == uploadFileTypeOpus {
+		if extra != nil {
+			bodyBuilder.Duration(extra.audioDuration)
+		}
+
+		// try to convert to opus format
+		// See: https://open.feishu.cn/document/server-docs/im-v1/file/create
+		opusData, _, err := audio.ConvertToOpus(ctx, data, fileName)
+		if err == nil {
+			bodyBuilder.File(bytes.NewReader(opusData))
+		} else {
+			// log only
+			slog.ErrorContext(ctx, "failed to convert audio to opus format", "error", err)
+		}
+	}
+
+	body := bodyBuilder.Build()
 	req := imv1.NewCreateFileReqBuilder().
-		Body(imv1.NewCreateFileReqBodyBuilder().
-			FileType(string(fileType)).
-			FileName(fileName).
-			File(bytes.NewReader(data)).
-			Build()).
+		Body(body).
 		Build()
 
 	// 发起请求
