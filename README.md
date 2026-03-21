@@ -1,7 +1,7 @@
 # Tokkibot
 
 <p align="center">
-  <img src="docs/tokkibot.png" alt="Tokkibot logo" height="96" style="vertical-align: middle; margin-right: 14px;">
+  <img src="docs/tokkibot.png" alt="Tokkibot logo" height="120" style="vertical-align: middle; margin-right: 14px;">
   <img src="docs/tokkibot-title.png" alt="Tokkibot title" height="96" style="vertical-align: middle;">
 </p>
 
