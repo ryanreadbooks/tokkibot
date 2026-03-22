@@ -25,6 +25,7 @@ type Config struct {
 
 	WorkspaceDir    string // workspace directory
 	SessionDir      string // where session and context logs are stored
+	VolatileContext bool   // if true, context/session data stays in memory only
 	EnableCwdAccess bool
 
 	Sandbox *config.SandboxConfig

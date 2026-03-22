@@ -148,10 +148,10 @@ func (c *ChatComponent) renderMessages() string {
 		if msg.IsUser() {
 			sb.WriteString(c.renderUserMessage(msg.Content))
 		} else if msg.IsAssistant() {
-			if msg.ReasoningContent != "" {
+			if strings.TrimSpace(msg.ReasoningContent) != "" {
 				sb.WriteString(c.renderThinkingMessage(msg.ReasoningContent))
 			}
-			if msg.Content != "" {
+			if strings.TrimSpace(msg.Content) != "" {
 				sb.WriteString(c.renderAssistantMessage(msg.Content))
 			}
 		} else if msg.IsToolCall() {
@@ -166,18 +166,22 @@ func (c *ChatComponent) renderMessages() string {
 func (c *ChatComponent) renderUserMessage(content string) string {
 	header := c.theme.User.HeaderStyle.Render("You:")
 	body := c.theme.User.BodyStyle.Render(content)
-	
+
 	boxWidth := c.viewport.Width - 4 // Account for padding and border
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
-	
+
 	box := c.theme.User.BoxStyle.Width(boxWidth).Render(header + "\n" + body)
 	return box + "\n"
 }
 
 // renderAssistantMessage renders an assistant message with markdown
 func (c *ChatComponent) renderAssistantMessage(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+
 	header := c.theme.Assistant.HeaderStyle.Render("Assistant:")
 
 	var body string
@@ -203,6 +207,10 @@ func (c *ChatComponent) renderAssistantMessage(content string) string {
 
 // renderThinkingMessage renders a thinking message
 func (c *ChatComponent) renderThinkingMessage(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+
 	header := c.theme.Thinking.HeaderStyle.Render("Thinking:")
 	body := c.theme.Thinking.BodyStyle.Render(content)
 	return header + "\n" + body + "\n"
@@ -211,7 +219,7 @@ func (c *ChatComponent) renderThinkingMessage(content string) string {
 // renderToolCallMessage renders a tool call message (no box, similar to thinking)
 func (c *ChatComponent) renderToolCallMessage(name, args string) string {
 	header := c.theme.ToolCallMsg.HeaderStyle.Render("🔧 Tool: " + name)
-	
+
 	// Format arguments
 	var argsDisplay string
 	if args == "" {
@@ -219,7 +227,7 @@ func (c *ChatComponent) renderToolCallMessage(name, args string) string {
 	} else {
 		argsDisplay = types.FormatToolCallArgs(name, args, 100)
 	}
-	
+
 	body := c.theme.ToolCallMsg.BodyStyle.Render(argsDisplay)
 	return header + "\n" + body + "\n"
 }

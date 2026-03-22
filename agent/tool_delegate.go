@@ -46,13 +46,14 @@ func (d *subAgentToolDelegate) spawnSubAgent(meta component.InvokeMeta, input *t
 	}
 
 	subAgentCfg := Config{
-		RootCtx:      d.a.cfg.RootCtx,
-		Name:         subAgentName,
-		Provider:     d.a.cfg.Provider,
-		Model:        d.a.cfg.Model,
-		MaxIteration: d.a.cfg.MaxIteration,
-		WorkspaceDir: d.a.cfg.WorkspaceDir,
-		SessionDir:   config.GetSubAgentSessionsDir(d.a.Name(), subAgentName),
+		RootCtx:         d.a.cfg.RootCtx,
+		Name:            subAgentName,
+		Provider:        d.a.cfg.Provider,
+		Model:           d.a.cfg.Model,
+		MaxIteration:    d.a.cfg.MaxIteration,
+		WorkspaceDir:    d.a.cfg.WorkspaceDir,
+		SessionDir:      config.GetSubAgentSessionsDir(d.a.Name(), subAgentName),
+		VolatileContext: true,
 
 		isSpawned:              true,
 		doNotAutoRegisterTools: true,

@@ -271,4 +271,3 @@ func (m Model) handleToolConfirm(msg ToolConfirmMsg) Model {
 	m.confirm.Show(msg.Request, msg.RespCh)
 	return m
 }
-

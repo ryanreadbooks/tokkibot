@@ -31,6 +31,12 @@ func WithSessionDir(sessionDir string) PrepareOption {
 	}
 }
 
+func WithVolatileContext(enable bool) PrepareOption {
+	return func(c *Config) {
+		c.VolatileContext = enable
+	}
+}
+
 func Prepare(ctx context.Context, agentName string, opts ...PrepareOption) (ag *Agent, err error) {
 	globalCfg := config.GetConfig()
 

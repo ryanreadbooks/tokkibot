@@ -44,7 +44,7 @@ type Agent struct {
 	outChannelsMu sync.RWMutex
 	outChannels   map[string]chan<- *chmodel.OutgoingMessage
 	// The context manager for the agent.
-	contextManager *agcontext.ContextManager
+	contextManager agcontext.ContextManager
 
 	// skill loader
 	skillLoader *componentskill.Loader
@@ -103,6 +103,7 @@ func NewAgent(
 			AgentWorkspace:       agentWorkspace,
 			SessionDir:           sessionDir,
 			SystemPromptTemplate: cfg.subagentPrompt,
+			Volatile:             cfg.VolatileContext,
 		},
 		skillLoader,
 	)

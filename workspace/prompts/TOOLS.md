@@ -6,6 +6,18 @@ All tools return: `{"success": bool, "data": "...", "err": "..."}`. Always check
 
 ## Key Rules
 
+**MUST follow these rules:**
+- Read before edit: always `read_file` before using `edit_file`
+- Prefer `edit_file` for modifications; avoid `write_file` unless full overwrite is intended
+- Use absolute paths to reduce path ambiguity and mistakes
+- Check each tool result and handle failures explicitly
+
+**NEVER do these:**
+- Run destructive commands (`rm -rf`, `git push --force`) without explicit confirmation
+- Assume files exist without checking
+- Continue after a tool error without addressing it
+- Make up file contents or tool outputs
+
 **File Operations:**
 - Use `edit_file` for modifications (safer than `write_file` which overwrites entirely)
 - Include enough context in `old_string` to ensure uniqueness
