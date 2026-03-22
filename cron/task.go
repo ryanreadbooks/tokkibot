@@ -19,6 +19,7 @@ const (
 // Task represents a cron task
 type Task struct {
 	Name      string     `json:"name"`
+	AgentName string     `json:"agent_name,omitempty"`
 	CronExpr  string     `json:"cron_expr"`
 	Enabled   bool       `json:"enabled"`
 	OneShot   bool       `json:"one_shot,omitempty"` // run once then disable
@@ -45,6 +46,13 @@ func WithDelivery(channel chmodel.Type, to string) TaskOption {
 		t.Deliver = true
 		t.DeliverChannel = channel
 		t.DeliverTo = to
+	}
+}
+
+// WithAgent sets task owner agent name.
+func WithAgent(agentName string) TaskOption {
+	return func(t *Task) {
+		t.AgentName = agentName
 	}
 }
 

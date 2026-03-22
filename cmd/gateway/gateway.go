@@ -19,16 +19,25 @@ var GatewayCmd = &cobra.Command{
 	Short: "Start the tokkibot gateway.",
 	Long:  "Start the tokkibot gateway.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return initGateway(cmd.Context())
+		return initAndRunGateway(cmd.Context())
 	},
 }
 
-func initGateway(ctx context.Context) error {
+func initAndRunGateway(ctx context.Context) error {
 	slog.Info("[cmd/gateway] initializing gateway")
+	cfg := config.GetConfig()
 
+	// check for heartbeat configs
+	heartbeatCfgs := make(map[string]config.AgentHeartbeatConfig)
+	for _, agentEntry := range cfg.Agents {
+		if agentEntry.Heartbeat != nil {
+			heartbeatCfgs[agentEntry.Name] = *agentEntry.Heartbeat
+		}
+	}
 	g, err := gw.NewGateway(ctx,
 		gw.WithVerbose(true),
 		gw.WithRunCronTasks(true),
+		gw.WithHeartbeatCfgs(heartbeatCfgs),
 	)
 	if err != nil {
 		slog.Error("[cmd/gateway] failed to create gateway", slog.Any("error", err))
@@ -37,9 +46,7 @@ func initGateway(ctx context.Context) error {
 
 	// auto-create adapters based on agent bindings in config
 	// Reuse adapters for the same channel+account to avoid duplicate connections
-	cfg := config.GetConfig()
 	adapterCache := make(map[string]chadapter.Adapter) // key: "channel:account"
-
 	for _, agentEntry := range cfg.Agents {
 		if agentEntry.Binding == nil {
 			continue
@@ -72,7 +79,7 @@ func initGateway(ctx context.Context) error {
 				slog.String("account", match.Account))
 		}
 
-		g.AddAdapterWithRouting(adapter, agentEntry.Name, match.ChatIds)
+		g.AddAdapterWithRouting(adapter, agentEntry.Name, match.Account, match.ChatIds)
 	}
 
 	return g.Run(ctx)

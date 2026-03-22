@@ -1,11 +1,11 @@
 # When to use:
 Use this tool ONLY when:
-- The user explicitly asks you to send something specific
-- You need to send attachments (images, audio, documents, etc.) that the user requested
+- You need to send non-text attachments the user requested (images, audio, documents, files, etc.).
 
 Supported formats: plain_text, markdown, or attachments.
 
 # When NOT to use:
+- In normal conversation, do NOT call this tool for plain text replies.
 - DO NOT use this to report your completion results or final answer
 - DO NOT use for progress updates or intermediate status (e.g., "I'm working on it...", "Step 1 done...")
 - DO NOT use for confirmations or acknowledgments (e.g., "Got it", "I understand", "Sure")

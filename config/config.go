@@ -71,12 +71,13 @@ func (c *SandboxConfig) GetReadWritePaths() []string {
 }
 
 type AgentEntry struct {
-	Name         string         `json:"name"`
-	MaxIteration int            `json:"maxIteration"`
-	Provider     string         `json:"provider"`
-	Model        string         `json:"model,omitempty"`
-	Binding      *AgentBinding  `json:"binding,omitempty"`
-	Sandbox      *SandboxConfig `json:"sandbox,omitempty"`
+	Name         string                `json:"name"`
+	MaxIteration int                   `json:"maxIteration"`
+	Provider     string                `json:"provider"`
+	Model        string                `json:"model,omitempty"`
+	Binding      *AgentBinding         `json:"binding,omitempty"`
+	Sandbox      *SandboxConfig        `json:"sandbox,omitempty"`
+	Heartbeat    *AgentHeartbeatConfig `json:"heartbeat,omitempty"`
 }
 
 type ChannelEntry struct {
@@ -92,6 +93,13 @@ type Config struct {
 
 func (c *Config) ToJson() ([]byte, error) {
 	return json.MarshalIndent(c, "", "  ")
+}
+
+type AgentHeartbeatConfig struct {
+	Every  string `json:"every"`  // 30m
+	Target string `json:"target"` // target channel
+	To     string `json:"to"`     // chatid of target channel
+	Prompt string `json:"prompt"` // prompt to send
 }
 
 func BootstrapConfig() Config {

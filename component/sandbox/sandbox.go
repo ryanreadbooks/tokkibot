@@ -22,14 +22,43 @@ type Option func(*option)
 
 func WithReadOnlyPaths(paths ...string) Option {
 	return func(o *option) {
-		o.readOnlyPaths = paths
+		o.readOnlyPaths = appendUniquePaths(o.readOnlyPaths, paths...)
 	}
 }
 
 func WithReadWritePaths(paths ...string) Option {
 	return func(o *option) {
-		o.readWritePaths = paths
+		o.readWritePaths = appendUniquePaths(o.readWritePaths, paths...)
 	}
+}
+
+func appendUniquePaths(base []string, paths ...string) []string {
+	seen := make(map[string]struct{}, len(base)+len(paths))
+	out := make([]string, 0, len(base)+len(paths))
+
+	for _, p := range base {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+
+	return out
 }
 
 func WithWorkingDir(dir string) Option {

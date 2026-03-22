@@ -7,6 +7,7 @@ import (
 	"github.com/ryanreadbooks/tokkibot/agent/tools/description"
 	"github.com/ryanreadbooks/tokkibot/channel/model"
 	"github.com/ryanreadbooks/tokkibot/component/tool"
+	"github.com/ryanreadbooks/tokkibot/config"
 	"github.com/ryanreadbooks/tokkibot/cron"
 )
 
@@ -51,9 +52,22 @@ func cronSchedule(mgr *cron.Manager, meta tool.InvokeMeta, input *CronInput) (st
 	if input.Prompt == "" {
 		return "", fmt.Errorf("prompt is required for schedule action")
 	}
+	agentName := meta.AgentName
+	if agentName == "" {
+		return "", fmt.Errorf("failed to resolve current agent for schedule action")
+	}
+
+	agentEntry := config.GetAgentEntry(agentName)
+	if agentEntry == nil {
+		return "", fmt.Errorf("agent not found in config: %s", agentName)
+	}
+	if agentEntry.Binding == nil {
+		return "", fmt.Errorf("agent %s has no binding in config", agentName)
+	}
 
 	channelType := model.Type(meta.Channel)
 	opts := []cron.TaskOption{
+		cron.WithAgent(agentName),
 		cron.WithDelivery(channelType, meta.ChatId),
 	}
 	if input.OneShot {
@@ -73,6 +87,7 @@ func cronSchedule(mgr *cron.Manager, meta tool.InvokeMeta, input *CronInput) (st
 	}
 
 	result := fmt.Sprintf("Cron task '%s' %s successfully.\n", input.Name, action)
+	result += fmt.Sprintf("  Agent: %s\n", agentName)
 	result += fmt.Sprintf("  Expression: %s\n", input.CronExpr)
 	result += fmt.Sprintf("  Deliver to: %s (channel: %s)\n", meta.ChatId, meta.Channel)
 	if input.OneShot {
@@ -89,8 +104,8 @@ func cronList(mgr *cron.Manager) (string, error) {
 	}
 
 	result := "Cron Tasks:\n"
-	result += "| Name | Expression | Enabled | OneShot | Deliver | Last Run |\n"
-	result += "|------|------------|---------|---------|---------|----------|\n"
+	result += "| Name | Agent | Expression | Enabled | OneShot | Deliver | Last Run |\n"
+	result += "|------|-------|------------|---------|---------|---------|----------|\n"
 
 	for _, task := range tasks {
 		lastRun := "-"
@@ -103,8 +118,8 @@ func cronList(mgr *cron.Manager) (string, error) {
 			deliver = fmt.Sprintf("%s:%s", task.DeliverChannel, task.DeliverTo)
 		}
 
-		result += fmt.Sprintf("| %s | %s | %v | %v | %s | %s |\n",
-			task.Name, task.CronExpr, task.Enabled, task.OneShot, deliver, lastRun)
+		result += fmt.Sprintf("| %s | %s | %s | %v | %v | %s | %s |\n",
+			task.Name, task.AgentName, task.CronExpr, task.Enabled, task.OneShot, deliver, lastRun)
 	}
 
 	return result, nil

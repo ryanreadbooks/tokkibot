@@ -38,12 +38,24 @@ func (a *LarkAdapter) sendMessage(
 
 	resp, err := a.cli.Im.Message.Create(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to send to lark", "error", err)
+		slog.ErrorContext(ctx, "failed to send to lark",
+			"error", err,
+			"receive_id_type", receiveIdType,
+			"receive_id", receiveId,
+			"msg_type", msgType,
+			"content_len", len(content),
+		)
 		return
 	}
 
 	if !resp.Success() {
-		slog.ErrorContext(ctx, "send lark message failed", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		slog.ErrorContext(ctx, "send lark message failed", "error", resp.ErrorResp(),
+			"request_id", resp.RequestId(),
+			"receive_id_type", receiveIdType,
+			"receive_id", receiveId,
+			"msg_type", msgType,
+			"content_len", len(content),
+		)
 		return
 	}
 }
@@ -64,7 +76,12 @@ func (a *LarkAdapter) sendCard(ctx context.Context, target messageTarget, conten
 
 	cdJson, err := json.Marshal(cd)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to marshal card",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"content_len", len(content),
+		)
 		return
 	}
 
@@ -74,7 +91,12 @@ func (a *LarkAdapter) sendCard(ctx context.Context, target messageTarget, conten
 func (a *LarkAdapter) sendImage(ctx context.Context, target messageTarget, image []byte) {
 	imgKey, err := a.uploadMessageResourceImage(ctx, image)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to upload image", "error", err)
+		slog.ErrorContext(ctx, "failed to upload image",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"image_size", len(image),
+		)
 		return
 	}
 
@@ -86,7 +108,14 @@ func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filen
 		audioDuration: audioDuration,
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to upload audio", "error", err)
+		slog.ErrorContext(ctx, "failed to upload audio",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"filename", filename,
+			"audio_size", len(audio),
+			"audio_duration", audioDuration,
+		)
 		return
 	}
 
@@ -96,7 +125,13 @@ func (a *LarkAdapter) sendAudio(ctx context.Context, target messageTarget, filen
 func (a *LarkAdapter) sendMedia(ctx context.Context, target messageTarget, filename string, media []byte) {
 	mediaKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeMp4, filename, media, nil)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to upload media", "error", err)
+		slog.ErrorContext(ctx, "failed to upload media",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"filename", filename,
+			"media_size", len(media),
+		)
 		return
 	}
 
@@ -106,7 +141,13 @@ func (a *LarkAdapter) sendMedia(ctx context.Context, target messageTarget, filen
 func (a *LarkAdapter) sendFile(ctx context.Context, target messageTarget, filename string, file []byte) {
 	fileKey, err := a.uploadMessageResourceFile(ctx, uploadFileTypeStream, filename, file, nil)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to upload file", "error", err)
+		slog.ErrorContext(ctx, "failed to upload file",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"filename", filename,
+			"file_size", len(file),
+		)
 		return
 	}
 
@@ -181,7 +222,12 @@ func (a *LarkAdapter) sendConfirmationCard(ctx context.Context, target messageTa
 	card := a.buildConfirmationCard(content, false)
 	cdJson, err := json.Marshal(card)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to marshal card",
+			"error", err,
+			"target_id_type", target.idType,
+			"target_id", target.id,
+			"content_len", len(content),
+		)
 		return
 	}
 
@@ -194,7 +240,11 @@ func (a *LarkAdapter) replyConfirmationCard(
 	card := a.buildConfirmationCard(content, false)
 	cdJson, err := json.Marshal(card)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to marshal card",
+			"error", err,
+			"message_id", messageId,
+			"content_len", len(content),
+		)
 		return "", err
 	}
 
@@ -213,12 +263,23 @@ func (a *LarkAdapter) replyMessage(ctx context.Context, messageId string, msgTyp
 		Build()
 	resp, err := a.cli.Im.Message.Reply(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to reply message", "error", err)
+		slog.ErrorContext(ctx, "failed to reply message",
+			"error", err,
+			"message_id", messageId,
+			"msg_type", msgType,
+			"content_len", len(content),
+		)
 		return "", err
 	}
 
 	if !resp.Success() {
-		slog.ErrorContext(ctx, "failed to reply message", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		slog.ErrorContext(ctx, "failed to reply message",
+			"error", resp.ErrorResp(),
+			"request_id", resp.RequestId(),
+			"message_id", messageId,
+			"msg_type", msgType,
+			"content_len", len(content),
+		)
 		return "", err
 	}
 
@@ -232,7 +293,11 @@ func (a *LarkAdapter) replyCard(ctx context.Context, messageId string, content s
 
 	cdJson, err := json.Marshal(cd)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to marshal card",
+			"error", err,
+			"message_id", messageId,
+			"content_len", len(content),
+		)
 		return "", err
 	}
 
@@ -301,7 +366,11 @@ func (a *LarkAdapter) replyCardEntity(ctx context.Context, messageId, cardId str
 	cd := card.NewEntity(cardId)
 	cdJson, err := json.Marshal(cd)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal card", "error", err)
+		slog.ErrorContext(ctx, "failed to marshal card",
+			"error", err,
+			"message_id", messageId,
+			"card_id", cardId,
+		)
 		return "", err
 	}
 
@@ -321,13 +390,21 @@ func (a *LarkAdapter) sendMessageReaction(ctx context.Context, messageId string,
 
 	resp, err := a.cli.Im.MessageReaction.Create(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to send message reaction", "error", err)
+		slog.ErrorContext(ctx, "failed to send message reaction",
+			"error", err,
+			"message_id", messageId,
+			"emoji_type", emojiType,
+		)
 		return ""
 	}
 
 	if !resp.Success() {
 		slog.ErrorContext(ctx, "failed to send message reaction",
-			"error", resp.ErrorResp(), "request_id", resp.RequestId())
+			"error", resp.ErrorResp(),
+			"request_id", resp.RequestId(),
+			"message_id", messageId,
+			"emoji_type", emojiType,
+		)
 		return ""
 	}
 
@@ -346,12 +423,21 @@ func (a *LarkAdapter) deleteMessageReaction(ctx context.Context, messageId, reac
 
 	resp, err := a.cli.Im.MessageReaction.Delete(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to delete message reaction", "error", err)
+		slog.ErrorContext(ctx, "failed to delete message reaction",
+			"error", err,
+			"message_id", messageId,
+			"reaction_id", reactionId,
+		)
 		return
 	}
 
 	if !resp.Success() {
-		slog.ErrorContext(ctx, "failed to delete message reaction", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		slog.ErrorContext(ctx, "failed to delete message reaction",
+			"error", resp.ErrorResp(),
+			"request_id", resp.RequestId(),
+			"message_id", messageId,
+			"reaction_id", reactionId,
+		)
 		return
 	}
 }
@@ -362,12 +448,19 @@ func (a *LarkAdapter) recallMessage(ctx context.Context, messageId string) {
 		Build()
 	resp, err := a.cli.Im.Message.Delete(ctx, req)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to recall message", "error", err)
+		slog.ErrorContext(ctx, "failed to recall message",
+			"error", err,
+			"message_id", messageId,
+		)
 		return
 	}
 
 	if !resp.Success() {
-		slog.ErrorContext(ctx, "failed to recall message", "error", resp.ErrorResp(), "request_id", resp.RequestId())
+		slog.ErrorContext(ctx, "failed to recall message",
+			"error", resp.ErrorResp(),
+			"request_id", resp.RequestId(),
+			"message_id", messageId,
+		)
 		return
 	}
 }

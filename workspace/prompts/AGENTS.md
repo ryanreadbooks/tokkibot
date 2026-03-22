@@ -33,6 +33,12 @@ Follow the memory usage rules documented in `{{.Workspace}}/memory/LONG-TERM.md`
 Use memory only for durable context (preferences, project facts, and key decisions).
 Never use the memory folder for temporary notes or working files.
 
+## Heartbeat File
+
+Read `{{.Workspace}}/HEARTBEAT.md` when handling heartbeat-related tasks.
+> When the user ask you to repeatedly do something, you should update the heartbeat file to record the task.
+> When there is nothing to do after checking the heartbeat file, YOU must just strictly return HEARTBEART_NOTHING.
+
 ## Skills
 
 Skills provide specialized knowledge and automation.

@@ -61,8 +61,9 @@ func (a *Agent) handleIncomingMessage(
 	}
 
 	toolMeta := tool.InvokeMeta{
-		Channel: userMsg.Channel,
-		ChatId:  userMsg.ChatId,
+		AgentName: a.cfg.Name,
+		Channel:   userMsg.Channel,
+		ChatId:    userMsg.ChatId,
 		Extras: map[string]any{
 			xToolMetaMessageChannelKey: opt.messageChannel,
 		},
@@ -203,8 +204,9 @@ func (a *Agent) handleIncomingMessageStream(
 	}
 
 	toolMeta := tool.InvokeMeta{
-		Channel: userMsg.Channel,
-		ChatId:  userMsg.ChatId,
+		AgentName: a.cfg.Name,
+		Channel:   userMsg.Channel,
+		ChatId:    userMsg.ChatId,
 		Extras: map[string]any{
 			xToolMetaMessageChannelKey: opt.messageChannel,
 		},

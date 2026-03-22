@@ -25,6 +25,8 @@ type gatewayOption struct {
 
 	enableAutoMessageDelivery bool
 	enableCwdAccess           bool
+
+	heartbeatCfgs map[string]config.AgentHeartbeatConfig // agent name -> heartbeat config
 }
 
 type GatewayOption func(*gatewayOption)
@@ -61,6 +63,12 @@ func WithEnableCwdAccess(enable bool) GatewayOption {
 	}
 }
 
+func WithHeartbeatCfgs(cfgs map[string]config.AgentHeartbeatConfig) GatewayOption {
+	return func(o *gatewayOption) {
+		o.heartbeatCfgs = cfgs
+	}
+}
+
 // routeRule defines how to route messages to an agent
 type routeRule struct {
 	agentName string
@@ -70,6 +78,7 @@ type routeRule struct {
 // adapterRouter manages routing for a single adapter
 type adapterRouter struct {
 	adapter chadapter.Adapter
+	account string
 	rules   []*routeRule
 }
 
@@ -89,13 +98,15 @@ func (r *adapterRouter) matchAgent(chatId string) string {
 }
 
 type Gateway struct {
-	agents  map[string]*agent.Agent
+	agents  map[string]*agent.Agent // name -> agent
 	wg      sync.WaitGroup
 	routers []*adapterRouter
-	// channel type → adapter (for cron delivery); keeps last-registered per type
-	channelAdapters map[chmodel.Type]chadapter.Adapter
-	poolMu          sync.Mutex
-	pools           map[string]*ants.Pool
+	// adapter indexes:
+	// - channel + account -> adapter
+	channelAdaptersMu sync.RWMutex
+	channelAdapters   map[chmodel.Type]map[string]chadapter.Adapter
+	poolMu            sync.Mutex
+	pools             map[string]*ants.Pool
 
 	// running tasks cancel functions, key: "agentName:channel:chatId"
 	runningMu sync.RWMutex
@@ -106,6 +117,8 @@ type Gateway struct {
 
 	verbose bool
 	option  *gatewayOption
+
+	heartbeatMgr *HeartbeatManager
 }
 
 func defaultGatewayOption() *gatewayOption {
@@ -161,7 +174,7 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 	gateway := &Gateway{
 		agents:          agents,
 		pools:           make(map[string]*ants.Pool),
-		channelAdapters: make(map[chmodel.Type]chadapter.Adapter),
+		channelAdapters: make(map[chmodel.Type]map[string]chadapter.Adapter),
 		running:         make(map[string]context.CancelFunc),
 		cronMgr:         cron.GetGlobalManager(),
 		verbose:         option.verbose,
@@ -172,6 +185,12 @@ func NewGateway(ctx context.Context, opts ...GatewayOption) (*Gateway, error) {
 
 	if err := gateway.cronMgr.Load(); err != nil {
 		slog.Warn("failed to load cron tasks", slog.Any("error", err))
+	}
+
+	// heartbeat manager
+	if len(option.heartbeatCfgs) > 0 {
+		heartbeatMgr := NewHeartbeatManager(gateway, option.heartbeatCfgs)
+		gateway.heartbeatMgr = heartbeatMgr
 	}
 
 	return gateway, nil
@@ -200,13 +219,13 @@ func (g *Gateway) AddAdapter(adapter chadapter.Adapter, agentName ...string) {
 	if len(agentName) > 0 && agentName[0] != "" {
 		name = agentName[0]
 	}
-	g.AddAdapterWithRouting(adapter, name, nil)
+	g.AddAdapterWithRouting(adapter, name, "", nil)
 }
 
 // AddAdapterWithRouting registers an adapter with routing rules.
 // If chatIds is nil/empty, all messages go to the specified agent.
 // Multiple calls with the same adapter will add additional routing rules.
-func (g *Gateway) AddAdapterWithRouting(adapter chadapter.Adapter, agentName string, chatIds []string) {
+func (g *Gateway) AddAdapterWithRouting(adapter chadapter.Adapter, agentName, account string, chatIds []string) {
 	// Find existing router for this adapter
 	var router *adapterRouter
 	for _, r := range g.routers {
@@ -218,8 +237,14 @@ func (g *Gateway) AddAdapterWithRouting(adapter chadapter.Adapter, agentName str
 
 	// Create new router if not found
 	if router == nil {
-		router = &adapterRouter{adapter: adapter}
+		router = &adapterRouter{adapter: adapter, account: account}
 		g.routers = append(g.routers, router)
+	} else if router.account != account {
+		slog.Warn("adapter account mismatch detected, keeping first binding account",
+			slog.String("agent", agentName),
+			slog.String("existing_account", router.account),
+			slog.String("incoming_account", account),
+		)
 	}
 
 	// Build chatId set
@@ -234,7 +259,12 @@ func (g *Gateway) AddAdapterWithRouting(adapter chadapter.Adapter, agentName str
 		chatIds:   chatIdSet,
 	})
 
-	g.channelAdapters[adapter.Type()] = adapter
+	g.channelAdaptersMu.Lock()
+	defer g.channelAdaptersMu.Unlock()
+	if _, ok := g.channelAdapters[adapter.Type()]; !ok {
+		g.channelAdapters[adapter.Type()] = make(map[string]chadapter.Adapter)
+	}
+	g.channelAdapters[adapter.Type()][account] = adapter
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
@@ -261,9 +291,78 @@ func (g *Gateway) Run(ctx context.Context) error {
 		})
 	}
 
+	if g.heartbeatMgr != nil {
+		g.heartbeatMgr.Start(ctx)
+	}
+
 	g.wg.Wait()
 
 	return nil
+}
+
+func (g *Gateway) getAdapter(channelType chmodel.Type) chadapter.Adapter {
+	g.channelAdaptersMu.RLock()
+	defer g.channelAdaptersMu.RUnlock()
+
+	byAccount := g.channelAdapters[channelType]
+	if len(byAccount) == 0 {
+		return nil
+	}
+	if adapter, ok := byAccount[""]; ok {
+		return adapter
+	}
+	if len(byAccount) == 1 {
+		for _, adapter := range byAccount {
+			return adapter
+		}
+	}
+
+	// deterministic fallback when account is not specified
+	var (
+		selectedAccount string
+		selectedAdapter chadapter.Adapter
+	)
+	for account, adapter := range byAccount {
+		if selectedAdapter == nil || account < selectedAccount {
+			selectedAccount = account
+			selectedAdapter = adapter
+		}
+	}
+	return selectedAdapter
+}
+
+func (g *Gateway) getAdapterByAccount(channelType chmodel.Type, account string) chadapter.Adapter {
+	g.channelAdaptersMu.RLock()
+	defer g.channelAdaptersMu.RUnlock()
+
+	byAccount := g.channelAdapters[channelType]
+	if len(byAccount) == 0 {
+		return nil
+	}
+	return byAccount[account]
+}
+
+func (g *Gateway) getDeliveryAdapter(
+	channelType chmodel.Type,
+	account string,
+) chadapter.Adapter {
+	if account != "" {
+		if adapter := g.getAdapterByAccount(channelType, account); adapter != nil {
+			return adapter
+		}
+	}
+	return g.getAdapter(channelType)
+}
+
+func (g *Gateway) getAgentBindingAccount(agentName string, channelType chmodel.Type) string {
+	entry := config.GetAgentEntry(agentName)
+	if entry == nil || entry.Binding == nil {
+		return ""
+	}
+	if entry.Binding.Match.Channel != channelType.String() {
+		return ""
+	}
+	return entry.Binding.Match.Account
 }
 
 func (g *Gateway) messageWorker(ctx context.Context, router *adapterRouter) {
@@ -441,9 +540,18 @@ func (e *msgEmitter) EmitDone() {
 	e.msg.EmitDone()
 }
 
+func (g *Gateway) getAgent(name string) *agent.Agent {
+	return g.agents[name]
+}
+
 // handleCronTask handles a triggered cron task using the __cron virtual agent
 func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 	chatId := task.ChatId()
+	ownerAgent := task.AgentName
+	if ownerAgent == "" {
+		// Backward compatibility for old cron tasks saved before agent_name was introduced.
+		ownerAgent = config.CronsAgentName
+	}
 
 	// Create trace info for cron task
 	traceInfo := trace.NewTraceInfo("cron", chatId, "")
@@ -456,20 +564,37 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 		Created: time.Now().Unix(),
 	}
 
-	cronsAgent := g.agents[config.CronsAgentName]
-	result := cronsAgent.Ask(ctx, userMessage)
-	slog.InfoContext(ctx, "cron task executed", slog.String("name", task.Name))
+	targetAgent := g.getAgent(ownerAgent)
+	if targetAgent == nil {
+		slog.ErrorContext(ctx, "owner agent not found for cron task",
+			slog.String("name", task.Name),
+			slog.String("agent", ownerAgent),
+		)
+		return
+	}
+
+	result := targetAgent.Ask(ctx, userMessage)
+	slog.InfoContext(ctx, "cron task executed",
+		slog.String("name", task.Name),
+		slog.String("agent", ownerAgent),
+	)
 
 	// deliver result if configured
 	if !task.Deliver {
 		return
 	}
 
-	adapter, ok := g.channelAdapters[task.DeliverChannel]
-	if !ok {
+	bindingAccount := g.getAgentBindingAccount(ownerAgent, task.DeliverChannel)
+	adapter := g.getDeliveryAdapter(
+		task.DeliverChannel,
+		bindingAccount,
+	)
+	if adapter == nil {
 		slog.ErrorContext(ctx, "adapter not found for cron task delivery",
 			slog.String("name", task.Name),
+			slog.String("agent", ownerAgent),
 			slog.String("channel", task.DeliverChannel.String()),
+			slog.String("account", bindingAccount),
 			slog.String("to", task.DeliverTo),
 		)
 		return
@@ -484,7 +609,9 @@ func (g *Gateway) handleCronTask(ctx context.Context, task *cron.Task) {
 	}:
 		slog.InfoContext(ctx, "cron task result delivered",
 			slog.String("name", task.Name),
+			slog.String("agent", ownerAgent),
 			slog.String("channel", task.DeliverChannel.String()),
+			slog.String("account", bindingAccount),
 			slog.String("to", task.DeliverTo),
 		)
 	default:

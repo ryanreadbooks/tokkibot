@@ -104,20 +104,23 @@ func (s *SandboxImpl) Execute(ctx context.Context, command string) (string, erro
 		return "", &SandboxError{Reason: "bwrap not available", Err: err}
 	}
 
-	executable, _ := bash.ParseCommand(command)
-	if executable == "" {
+	executableToken, _ := bash.ParseCommand(command)
+	if executableToken == "" {
 		return "", &SandboxError{Reason: "empty command", Err: fmt.Errorf("no executable parsed from command")}
 	}
 
-	executablePath, err := exec.LookPath(executable)
+	executablePath, err := resolveExecutablePath(executableToken)
 	if err != nil {
-		return "", &SandboxError{Reason: fmt.Sprintf("executable %q not found on host", executable), Err: err}
+		return "", &SandboxError{Reason: fmt.Sprintf("executable %q not found on host", executableToken), Err: err}
 	}
 
 	bwrapArgs := s.buildBwrapArgs(executablePath)
 	bwrapArgs = append(bwrapArgs, "sh", "-c", command)
 
 	cmd := exec.CommandContext(ctx, bwrapPath, bwrapArgs...)
+	// Explicitly pass host environment variables into bwrap process.
+	// bwrap --setenv flags in buildBwrapArgs can still override selected keys.
+	cmd.Env = os.Environ()
 
 	output, err := cmd.CombinedOutput()
 	if err == nil {
@@ -155,6 +158,49 @@ func summarizeOutput(output string) string {
 		return output[:maxLen] + "..."
 	}
 	return output
+}
+
+func resolveExecutablePath(token string) (string, error) {
+	executable := normalizeExecutableToken(token)
+	if executable == "" {
+		return "", fmt.Errorf("empty executable token")
+	}
+
+	path, err := exec.LookPath(executable)
+	if err == nil {
+		return path, nil
+	}
+
+	// Shell builtins (e.g. cd/export/source) are resolved by sh at runtime.
+	// For these commands, bind shell itself instead of failing early.
+	if isShellBuiltin(executable) {
+		shPath, shErr := exec.LookPath("sh")
+		if shErr != nil {
+			return "", fmt.Errorf("shell not found: %w", shErr)
+		}
+		return shPath, nil
+	}
+
+	return "", err
+}
+
+func normalizeExecutableToken(token string) string {
+	s := strings.TrimSpace(token)
+	for strings.HasPrefix(s, "(") {
+		s = strings.TrimPrefix(s, "(")
+	}
+	return strings.TrimSpace(s)
+}
+
+func isShellBuiltin(name string) bool {
+	switch name {
+	case "cd", ".", "source", "export", "unset", "set", "alias", "unalias",
+		"readonly", "local", "shift", "eval", "exec", "test", "[", "umask",
+		"ulimit", "wait", "trap", "history", "jobs", "fg", "bg":
+		return true
+	default:
+		return false
+	}
 }
 
 const sandboxHome = "/home/sandbox"
