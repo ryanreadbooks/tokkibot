@@ -203,10 +203,14 @@ func isShellBuiltin(name string) bool {
 	}
 }
 
-const sandboxHome = "/home/sandbox"
-
 func (s *SandboxImpl) buildBwrapArgs(executablePath string) []string {
 	hostHome, _ := os.UserHomeDir()
+	// Use host's home path inside sandbox for consistent path references,
+	// but mount it as tmpfs (isolated writable space, not a bind mount)
+	sandboxHome := hostHome
+	if sandboxHome == "" {
+		sandboxHome = "/home/sandbox"
+	}
 
 	args := []string{
 		"--unshare-all",
@@ -245,7 +249,7 @@ func (s *SandboxImpl) buildBwrapArgs(executablePath string) []string {
 	args = append(args,
 		"--proc", "/proc",
 		"--dev", "/dev",
-		"--tmpfs", "/tmp",
+		"--bind", "/tmp", "/tmp",
 		"--tmpfs", "/run",
 		"--tmpfs", "/var/tmp",
 	)

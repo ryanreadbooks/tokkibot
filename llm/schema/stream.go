@@ -166,7 +166,7 @@ func readStreamResponseChunk(
 	for chunk := range ch {
 		if chunk.Err != nil {
 			contentCh <- &StreamContentFragment{
-				Content:      fmt.Sprintf("error: %v", chunk.Err),
+				Content:      fmt.Sprintf("stream error: %v", chunk.Err),
 				FinishReason: FinishReasonStop,
 			}
 			break

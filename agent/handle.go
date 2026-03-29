@@ -199,6 +199,7 @@ func (a *Agent) handleIncomingMessageStream(
 	defer emitter.EmitDone()
 
 	if err := a.initMessageContext(ctx, userMsg); err != nil {
+		slog.ErrorContext(ctx, "[agent] failed to init message context", slog.Any("error", err))
 		emitter.EmitContent(&EmittedContent{Round: -1, Content: err.Error()})
 		return
 	}
@@ -216,6 +217,7 @@ mainLoop:
 	for curIter := 1; curIter <= a.cfg.MaxIteration; curIter++ {
 		select {
 		case <-ctx.Done():
+			slog.WarnContext(ctx, "[agent] message handling cancelled", slog.Int("iteration", curIter))
 			emitter.EmitContent(&EmittedContent{Round: curIter, Content: formatCancelledError(ctx)})
 			break mainLoop
 		default:
@@ -231,6 +233,11 @@ mainLoop:
 
 		llmReq, err := a.buildLLMMessageRequest(ctx, userMsg)
 		if err != nil {
+			slog.ErrorContext(ctx, "[agent] failed to build llm request",
+				slog.Int("iteration", curIter),
+				slog.Any("error", err),
+				slog.Any("user_msg", userMsg),
+			)
 			emitter.EmitContent(&EmittedContent{Round: curIter, Content: err.Error()})
 			break
 		}

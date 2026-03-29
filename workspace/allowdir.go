@@ -10,6 +10,7 @@ import (
 var sharedReadDirs = []string{
 	"refs",
 	"medias",
+	"skills",
 }
 
 // Per-agent dirs under agentWorkspace (~/.tokkibot/workspace[-{name}]/)
