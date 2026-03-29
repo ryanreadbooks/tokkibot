@@ -29,6 +29,22 @@ Tokkibot is a general-purpose AI Agent that supports multi-channel interaction (
 - **Scheduled Tasks**: Cron scheduling with result delivery to Lark
 - **Streaming Output**: Real-time display of generated content
 
+
+<table align="center">
+  <tr align="center">
+    <th><p align="center">📅 Task Scheduling</p></th>
+    <th><p align="center">🔍 Discovery</p></th>
+    <th><p align="center">💻 Software Engineer</p></th>
+    <th><p align="center">🧠 Learn & Memory</p></th>
+  </tr>
+  <tr>
+    <td align="center"><p align="center"><img src="docs/cases/demo-1.webp" width="180"></p></td>
+    <td align="center"><p align="center"><img src="docs/cases/demo-2.webp" width="180"></p></td>
+    <td align="center"><p align="center"><img src="docs/cases/demo-3.webp" width="180"></p></td>
+    <td align="center"><p align="center"><img src="docs/cases/demo-4.webp" width="180"></p></td>
+  </tr>
+</table>
+
 ## 🚀 Quick Start
 
 ### Initialization
