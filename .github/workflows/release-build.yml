@@ -1,0 +1,88 @@
+name: Release Build And Publish PyPI
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pypi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Validate release tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG"
+            echo "Expected format: vMAJOR.MINOR.PATCH (e.g. v1.2.3, v1.2.3-rc.1)"
+            exit 1
+          fi
+
+      - name: Build wheel from release tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          python3 build.py . --version "${VERSION}" --output-dir dist
+
+      - name: Validate wheel metadata
+        run: uvx twine check dist/*.whl
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.whl > SHA256SUMS
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ github.event.release.tag_name }}
+          path: |
+            dist/*.whl
+            dist/SHA256SUMS
+
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist/*.whl
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+
+      - name: Publish wheel to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$UV_PUBLISH_TOKEN" ]; then
+            echo "PYPI_API_TOKEN secret is not configured."
+            exit 1
+          fi
+          uv publish dist/*.whl
