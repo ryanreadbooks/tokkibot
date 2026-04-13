@@ -37,6 +37,7 @@ func init() {
 	rootCmd.AddCommand(gateway.GatewayCmd)
 	rootCmd.AddCommand(cron.CronCmd)
 	rootCmd.AddCommand(mcp.McpCmd)
+	rootCmd.AddCommand(VersionCmd)
 }
 
 func main() {

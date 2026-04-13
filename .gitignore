@@ -1,3 +1,6 @@
 .vscode
 .test
 .tokkibot
+
+__pycache__
+dist
